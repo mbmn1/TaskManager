@@ -41,6 +41,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   const [empEmail, setEmpEmail] = useState("");
   const [empPhone, setEmpPhone] = useState("");
   const [empDesignation, setEmpDesignation] = useState("");
+  const [empPassword, setEmpPassword] = useState("");
   const [empError, setEmpError] = useState<string | null>(null);
   const [empSuccess, setEmpSuccess] = useState(false);
   const [empLoading, setEmpLoading] = useState(false);
@@ -59,6 +60,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   const [editEmpEmail, setEditEmpEmail] = useState("");
   const [editEmpDesignation, setEditEmpDesignation] = useState("");
   const [editEmpRole, setEditEmpRole] = useState<'admin' | 'employee'>('employee');
+  const [editEmpPassword, setEditEmpPassword] = useState("");
   const [editEmpLoading, setEditEmpLoading] = useState(false);
   const [editEmpError, setEditEmpError] = useState<string | null>(null);
 
@@ -140,13 +142,15 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
         name: empName,
         email: emailNormalized,
         phone: normalizedPhone,
-        designation: empDesignation
+        designation: empDesignation,
+        password: empPassword || "123456"
       });
 
       setEmpName("");
       setEmpEmail("");
       setEmpPhone("");
       setEmpDesignation("");
+      setEmpPassword("");
       setEmpSuccess(true);
       setTimeout(() => setEmpSuccess(false), 3000);
     } catch (err: any) {
@@ -198,7 +202,8 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
       const res = await updateEmployee(editingEmployee.email || editingEmployee.phone, {
         name: editEmpName,
         designation: editEmpDesignation,
-        role: editEmpRole
+        role: editEmpRole,
+        password: editEmpPassword
       });
       if (res && res.error) {
         setEditEmpError(res.error);
@@ -398,7 +403,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                 {empSuccess && (
                   <div className="bg-emerald-50 text-emerald-800 p-3 rounded-xl flex items-center gap-2 text-xs border border-emerald-200">
                     <UserCheck className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
-                    <span>Employee registered successfully! They can now log in via Gmail OTP.</span>
+                    <span>Employee registered successfully! They can now log in via Password.</span>
                   </div>
                 )}
 
@@ -446,6 +451,17 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                     value={empDesignation}
                     onChange={(e) => setEmpDesignation(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium placeholder-slate-400 text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Login Password</label>
+                  <input
+                    type="text"
+                    placeholder="Enter password (default: 123456)"
+                    value={empPassword}
+                    onChange={(e) => setEmpPassword(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-semibold placeholder-slate-400 text-slate-800"
                   />
                 </div>
 
@@ -543,6 +559,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                                     setEditEmpEmail(emp.email);
                                     setEditEmpDesignation(emp.designation || "");
                                     setEditEmpRole(emp.role || "employee");
+                                    setEditEmpPassword(emp.password || "");
                                     setEditEmpError(null);
                                   }}
                                   className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
@@ -920,6 +937,18 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                       <option value="employee">Employee (Limited Board Access)</option>
                       <option value="admin">Administrator (Full Control)</option>
                     </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Change / Update Password</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Enter new password"
+                      value={editEmpPassword}
+                      onChange={(e) => setEditEmpPassword(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium text-slate-800"
+                    />
                   </div>
 
                   <div className="flex justify-end gap-2.5 pt-4 border-t border-slate-100 mt-5">

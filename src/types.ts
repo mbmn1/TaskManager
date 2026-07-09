@@ -5,6 +5,7 @@ export interface Employee {
   phone: string;
   designation: string;
   role: 'admin' | 'employee';
+  password?: string;
 }
 
 export interface Project {

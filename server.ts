@@ -37,8 +37,14 @@ async function runSupabaseMigrations() {
         email TEXT NOT NULL,
         phone TEXT,
         designation TEXT,
-        role TEXT DEFAULT 'employee' CHECK (role IN ('admin', 'employee'))
+        role TEXT DEFAULT 'employee' CHECK (role IN ('admin', 'employee')),
+        password TEXT DEFAULT '123456'
       );
+    `);
+
+    // Ensure password column exists if the table was created previously without it
+    await client.query(`
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS password TEXT DEFAULT '123456';
     `);
 
     // 2. Create projects table
@@ -103,12 +109,12 @@ async function runSupabaseMigrations() {
 
     // Seed admin accounts
     await client.query(`
-      INSERT INTO employees (id, name, email, phone, designation, role)
+      INSERT INTO employees (id, name, email, phone, designation, role, password)
       VALUES 
-        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin'),
-        ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884897', 'Admin (Owner)', 'employee')
+        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
+        ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884897', 'Admin (Owner)', 'employee', 'Mbmn@B!#!951')
       ON CONFLICT (id) DO UPDATE 
-      SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role;
+      SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role, password = EXCLUDED.password;
     `);
 
     console.log("Supabase PostgreSQL tables checked and seeded successfully.");
@@ -140,12 +146,7 @@ if (supabaseUrl && supabaseKey) {
   }
 }
 
-// Path to fallback database (uses /tmp on Vercel as root is read-only)
-const FALLBACK_DB_PATH = process.env.VERCEL
-  ? path.join("/tmp", "db_fallback.json")
-  : path.join(process.cwd(), "db_fallback.json");
-
-// Local DB cache
+// Local DB in-memory cache (no file persistence)
 let localDB: { [collection: string]: { [id: string]: any } } = {
   employees: {
     "innovalleyservices@gmail.com": {
@@ -170,36 +171,6 @@ let localDB: { [collection: string]: { [id: string]: any } } = {
   notifications: {},
   logs: {}
 };
-
-// Load existing fallback DB if available
-function loadFallbackDB() {
-  try {
-    if (fs.existsSync(FALLBACK_DB_PATH)) {
-      const content = fs.readFileSync(FALLBACK_DB_PATH, "utf8");
-      const parsed = JSON.parse(content);
-      localDB = { ...localDB, ...parsed };
-      console.log("Local fallback database loaded successfully from", FALLBACK_DB_PATH);
-    } else {
-      saveFallbackDB();
-    }
-  } catch (err) {
-    console.error("Failed to load local fallback DB:", err);
-  }
-}
-
-function saveFallbackDB() {
-  try {
-    const dir = path.dirname(FALLBACK_DB_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(FALLBACK_DB_PATH, JSON.stringify(localDB, null, 2), "utf8");
-  } catch (err) {
-    console.error("Failed to save local fallback DB:", err);
-  }
-}
-
-loadFallbackDB();
 
 class DBWrapper {
   public useLocalFallback = false;
@@ -401,7 +372,6 @@ class DBWrapper {
                 localDB[name][id] = isMerge 
                   ? { ...(localDB[name][id] || {}), ...data, id }
                   : { ...data, id };
-                saveFallbackDB();
                 return;
               } catch (err: any) {
                 console.error(`Supabase set doc error on '${name}/${id}':`, err.message);
@@ -415,7 +385,6 @@ class DBWrapper {
             localDB[name][id] = isMerge 
               ? { ...(localDB[name][id] || {}), ...data, id }
               : { ...data, id };
-            saveFallbackDB();
           },
 
           async update(data: any) {
@@ -427,7 +396,6 @@ class DBWrapper {
                 // Write to fallback for robustness
                 if (!localDB[name]) localDB[name] = {};
                 localDB[name][id] = { ...(localDB[name][id] || {}), ...data };
-                saveFallbackDB();
                 return;
               } catch (err: any) {
                 console.error(`Supabase update doc error on '${name}/${id}':`, err.message);
@@ -439,7 +407,6 @@ class DBWrapper {
               localDB[name] = {};
             }
             localDB[name][id] = { ...(localDB[name][id] || {}), ...data };
-            saveFallbackDB();
           },
 
           async delete() {
@@ -450,7 +417,6 @@ class DBWrapper {
                 
                 if (localDB[name]) {
                   delete localDB[name][id];
-                  saveFallbackDB();
                 }
                 return;
               } catch (err: any) {
@@ -461,7 +427,6 @@ class DBWrapper {
             // FALLBACK LOGIC
             if (localDB[name]) {
               delete localDB[name][id];
-              saveFallbackDB();
             }
           }
         };
@@ -518,6 +483,7 @@ export { app };
 
 const otpCodes = new Map<string, string>();
 const authChallenges = new Map<string, any>();
+const captchaStore = new Map<string, string>();
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -603,6 +569,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
         id: emailNormalized,
         email: employee.email.trim(),
         phone: employee.phone ? employee.phone.trim() : "",
+        password: employee.password ? employee.password.trim() : "123456",
         role: 'employee'
       };
       await empRef.set(newEmp);
@@ -661,6 +628,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
       if (phone !== undefined) updateData.phone = phone;
       if (designation !== undefined) updateData.designation = designation;
       if (role !== undefined) updateData.role = role;
+      if (req.body.password !== undefined) updateData.password = req.body.password;
       
       if (docSnap && docSnap.exists) {
         await empRef.update(updateData);
@@ -743,131 +711,65 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
     };
   }
 
-  // Send sign-in verification code or challenge
-  app.post("/api/auth/send-code", async (req, res) => {
+  // Generate a new alphanumeric captcha
+  app.get("/api/auth/captcha", (req, res) => {
     try {
-      const { email, identifier } = req.body;
-      const input = (identifier || email || "").toString().trim();
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // clear alphanumeric chars
+      let captchaText = "";
+      for (let i = 0; i < 5; i++) {
+        captchaText += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      const captchaId = "cap_" + Math.random().toString(36).substring(2, 12);
+      captchaStore.set(captchaId, captchaText);
       
-      if (!input) {
-        return res.status(400).json({ error: "Mobile number or Gmail address is required." });
-      }
-
-      const inputNormalized = input.toLowerCase();
-
-      // Handle Admin login case
-      if (inputNormalized === "innovalleyservices@gmail.com") {
-        return res.json({
-          success: true,
-          isAdmin: true,
-          message: "Please enter your administrator password."
-        });
-      }
-
-      // Handle standard employee phone/mobile lookup
-      const cleanedPhone = input.replace(/[^0-9]/g, "");
-      let matchedEmployee = null;
-
-      if (cleanedPhone) {
-        // Query database to find an employee with this phone number
-        const snap = await db.collection("employees").where("phone", "==", cleanedPhone).get();
-        if (!snap.empty) {
-          snap.forEach((doc: any) => {
-            matchedEmployee = doc.data();
-          });
-        } else {
-          // Fallback: fetch all and find matching cleaned phone
-          const allSnap = await db.collection("employees").get();
-          allSnap.forEach((doc: any) => {
-            const data = doc.data();
-            if (data && data.phone) {
-              const cp = data.phone.replace(/[^0-9]/g, "");
-              if (cp === cleanedPhone) {
-                matchedEmployee = data;
-              }
-            }
-          });
+      // Automatically prune captchaStore if it grows too large
+      if (captchaStore.size > 2000) {
+        const keys = Array.from(captchaStore.keys());
+        for (let i = 0; i < 500; i++) {
+          captchaStore.delete(keys[i]);
         }
       }
 
-      // If still not found, check if they input their email by mistake (to be user-friendly)
-      if (!matchedEmployee && inputNormalized.includes("@")) {
-        const empRef = db.collection("employees").doc(inputNormalized);
-        const empSnap = await empRef.get();
-        if (empSnap.exists) {
-          matchedEmployee = empSnap.data();
-        }
-      }
-
-      if (!matchedEmployee) {
-        return res.status(404).json({ error: "This mobile number is not registered in the system. Please ask Admin to add you first." });
-      }
-
-      const fullPhone = matchedEmployee.phone ? matchedEmployee.phone.replace(/[^0-9]/g, "") : cleanedPhone;
-      const empEmail = matchedEmployee.email || "employee@gmail.com";
-
-      // Generate the alphabet challenge
-      const { maskedEmail, missingAnswer } = generateEmailChallenge(empEmail);
-
-      // Generate math puzzle
-      const num1 = Math.floor(Math.random() * 20) + 5; // 5 to 25
-      const num2 = Math.floor(Math.random() * 9) + 2;   // 2 to 10
-      const ops = ["+", "-", "*"];
-      const op = ops[Math.floor(Math.random() * ops.length)];
-      let mathAnswer = 0;
-      if (op === "+") {
-        mathAnswer = num1 + num2;
-      } else if (op === "-") {
-        mathAnswer = num1 - num2;
-      } else if (op === "*") {
-        mathAnswer = num1 * num2;
-      }
-
-      // Save the challenge under phone number for verification lookup
-      const sessionKey = fullPhone || empEmail.toLowerCase();
-      authChallenges.set(sessionKey, {
-        email: empEmail,
-        phone: fullPhone,
-        maskedEmail: maskedEmail,
-        missingAnswer: missingAnswer,
-        mathPuzzle: { num1, num2, op },
-        mathAnswer: mathAnswer,
-        employee: matchedEmployee
-      });
-
-      // Generate backup 6-digit OTP
-      const backupCode = Math.floor(100000 + Math.random() * 900000).toString();
-      otpCodes.set(sessionKey, backupCode);
-
-      res.json({
-        success: true,
-        maskedEmail,
-        mathPuzzle: { num1, num2, op },
-        phone: fullPhone,
-        code: backupCode // Return backup OTP for UI support
-      });
+      res.json({ captchaId, captchaText });
     } catch (err: any) {
-      console.error("Error in send-code:", err);
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Verify sign-in challenge / password / OTP
-  app.post("/api/auth/verify-code", async (req, res) => {
+  // Verify and Login
+  app.post("/api/auth/login", async (req, res) => {
     try {
-      const { email, identifier, password, code, verificationType, emailAlphabetAnswer, mathAnswer } = req.body;
-      const input = (identifier || email || "").toString().trim();
-      
-      if (!input) {
-        return res.status(400).json({ error: "Identifier is required." });
+      const { identifier, password, captchaId, captchaInput } = req.body;
+      const input = (identifier || "").toString().trim();
+      const pass = (password || "").toString().trim();
+      const capIn = (captchaInput || "").toString().trim().toUpperCase();
+
+      if (!input || !pass) {
+        return res.status(400).json({ error: "Email/Phone and Password are required." });
       }
+
+      if (!captchaId || !capIn) {
+        return res.status(400).json({ error: "Captcha verification is required." });
+      }
+
+      // Verify captcha
+      const storedCaptcha = captchaStore.get(captchaId);
+      if (!storedCaptcha) {
+        return res.status(400).json({ error: "Captcha session expired. Please reload the captcha." });
+      }
+      
+      if (capIn !== storedCaptcha) {
+        return res.status(400).json({ error: "Incorrect captcha code. Please try again." });
+      }
+
+      // Delete verified captcha
+      captchaStore.delete(captchaId);
 
       const inputNormalized = input.toLowerCase();
 
-      // Case 1: Sole Administrator Password verification
+      // Special handling for hardcoded Sole Admin
       if (inputNormalized === "innovalleyservices@gmail.com") {
-        if (password === "Mbmn@B!#!951") {
-          // Fetch or seed admin profile
+        if (pass === "Mbmn@B!#!951") {
           const adminRef = db.collection("employees").doc("innovalleyservices@gmail.com");
           let adminSnap = await adminRef.get();
           let adminEmployee = null;
@@ -881,12 +783,12 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
               email: "innovalleyservices@gmail.com",
               phone: "9848884897",
               designation: "Project Director (Admin)",
-              role: "admin"
+              role: "admin",
+              password: "Mbmn@B!#!951"
             };
             await adminRef.set(adminEmployee);
           }
 
-          // Ensure role is admin
           if (adminEmployee.role !== "admin") {
             adminEmployee.role = "admin";
             await adminRef.update({ role: "admin" });
@@ -901,71 +803,89 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
         }
       }
 
-      // Case 2: Standard Employee verification
-      const cleanedPhone = input.replace(/[^0-9]/g, "");
-      const sessionKey = cleanedPhone || inputNormalized;
-
-      const challenge = authChallenges.get(sessionKey);
-      if (!challenge) {
-        return res.status(400).json({ error: "Challenge session expired. Please sign in again." });
-      }
-
-      // Check for backup 6-digit OTP verification
-      if (verificationType === "otp") {
-        if (!code) {
-          return res.status(400).json({ error: "Backup code is required." });
-        }
-        const storedCode = otpCodes.get(sessionKey);
-        if (code === storedCode || code === "123456") {
-          authChallenges.delete(sessionKey);
-          otpCodes.delete(sessionKey);
-          return res.json({
-            success: true,
-            employee: challenge.employee
+      // Search for employee by email or phone
+      let matchedEmployee: any = null;
+      
+      // 1. Check by ID (which is lowercase email) or direct email field
+      const empRef = db.collection("employees").doc(inputNormalized);
+      const empSnap = await empRef.get();
+      if (empSnap.exists) {
+        matchedEmployee = empSnap.data();
+      } else {
+        // Query by email
+        const emailSnap = await db.collection("employees").where("email", "==", inputNormalized).get();
+        if (!emailSnap.empty) {
+          emailSnap.forEach((doc: any) => {
+            matchedEmployee = doc.data();
           });
-        } else {
-          return res.status(400).json({ error: "Incorrect backup code." });
         }
       }
 
-      // Custom popup verification (Math + Email alphabets)
-      if (!mathAnswer) {
-        return res.status(400).json({ error: "Please answer the mathematical puzzle." });
-      }
-      if (!emailAlphabetAnswer) {
-        return res.status(400).json({ error: "Please answer the email alphabet challenge." });
-      }
-
-      // 1. Verify Math Puzzle
-      if (parseInt(mathAnswer) !== challenge.mathAnswer) {
-        return res.status(400).json({ error: "Incorrect mathematical answer." });
-      }
-
-      // 2. Verify Email Alphabets Challenge
-      const userAlphaVal = emailAlphabetAnswer.trim().toLowerCase();
-      const expectedAlphaVal = challenge.missingAnswer.toLowerCase();
-      const fullEmailPrefix = challenge.email.split("@")[0].toLowerCase();
-      const fullEmail = challenge.email.trim().toLowerCase();
-
-      const alphaMatches = 
-        userAlphaVal === expectedAlphaVal || 
-        userAlphaVal === fullEmailPrefix || 
-        userAlphaVal === fullEmail;
-
-      if (!alphaMatches) {
-        return res.status(400).json({ error: "Incorrect email alphabet letters." });
+      // 2. Query by phone if not found
+      if (!matchedEmployee) {
+        const cleanedPhone = input.replace(/[^0-9]/g, "");
+        if (cleanedPhone) {
+          const phoneSnap = await db.collection("employees").where("phone", "==", cleanedPhone).get();
+          if (!phoneSnap.empty) {
+            phoneSnap.forEach((doc: any) => {
+              matchedEmployee = doc.data();
+            });
+          }
+        }
       }
 
-      // All challenges passed successfully!
-      authChallenges.delete(sessionKey);
-      otpCodes.delete(sessionKey);
+      if (!matchedEmployee) {
+        return res.status(404).json({ error: "User is not registered in the system. Please ask Admin to add you." });
+      }
+
+      // Check password
+      const dbPassword = matchedEmployee.password || "123456"; // default fallback for pre-existing accounts
+      if (pass !== dbPassword) {
+        return res.status(400).json({ error: "Incorrect password. Please try again." });
+      }
 
       return res.json({
         success: true,
-        employee: challenge.employee
+        employee: matchedEmployee
       });
     } catch (err: any) {
-      console.error("Error in verify-code:", err);
+      console.error("Login error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // User changes their own password
+  app.post("/api/auth/change-password", async (req, res) => {
+    try {
+      const { email, currentPassword, newPassword } = req.body;
+      const emailNormalized = email.trim().toLowerCase();
+      
+      const empRef = db.collection("employees").doc(emailNormalized);
+      const docSnap = await empRef.get();
+      
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: "Employee profile not found." });
+      }
+      
+      const employeeData = docSnap.data();
+      const dbPassword = employeeData.password || "123456"; // Default password fallback
+      
+      // If it's the admin, verify master password
+      const isAdmin = emailNormalized === "innovalleyservices@gmail.com";
+      const masterPassword = "Mbmn@B!#!951";
+      
+      const isCurrentCorrect = isAdmin 
+        ? (currentPassword === masterPassword || currentPassword === dbPassword)
+        : (currentPassword === dbPassword);
+        
+      if (!isCurrentCorrect) {
+        return res.status(400).json({ error: "Incorrect current password." });
+      }
+      
+      await empRef.update({ password: newPassword });
+      res.json({ success: true, message: "Password updated successfully!" });
+    } catch (err: any) {
+      console.error("Error changing password:", err);
       res.status(500).json({ error: err.message });
     }
   });

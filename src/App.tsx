@@ -12,7 +12,9 @@ import {
   Phone,
   ShieldCheck,
   Building2,
-  History
+  History,
+  Key,
+  AlertCircle
 } from "lucide-react";
 import { Employee, Project } from "./types";
 import { subscribeEmployees, subscribeProjects, seedAdminUser } from "./lib/firestoreService";
@@ -23,30 +25,16 @@ import ProgressTracker from "./components/ProgressTracker";
 import { motion, AnimatePresence } from "motion/react";
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<Employee | null>(() => {
-    const saved = localStorage.getItem("firebase_task_user");
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [currentUser, setCurrentUser] = useState<Employee | null>(null);
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [activeTab, setActiveTab] = useState<'board' | 'progress' | 'employees' | 'projects' | 'logs'>(() => {
-    const saved = localStorage.getItem("firebase_task_user");
-    if (saved) {
-      const user = JSON.parse(saved);
-      const emailNorm = (user.email || "").toLowerCase().trim();
-      if (user.role === 'admin' || emailNorm === 'mbmnmurali@gmail.com' || emailNorm === 'innovalleyservices@gmail.com') {
-        return 'progress';
-      }
-    }
-    return 'board';
-  });
+  const [activeTab, setActiveTab] = useState<'board' | 'progress' | 'employees' | 'projects' | 'logs'>('board');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Handle successful login
   const handleLoginSuccess = (user: Employee) => {
     setCurrentUser(user);
-    localStorage.setItem("firebase_task_user", JSON.stringify(user));
     const emailNorm = (user.email || "").toLowerCase().trim();
     if (user.role === 'admin' || emailNorm === 'mbmnmurali@gmail.com' || emailNorm === 'innovalleyservices@gmail.com') {
       setActiveTab('progress');
@@ -58,7 +46,70 @@ export default function App() {
   // Handle Logout
   const handleLogout = () => {
     setCurrentUser(null);
-    localStorage.removeItem("firebase_task_user");
+  };
+
+  // Change Password state
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
+  const [changePasswordSuccess, setChangePasswordSuccess] = useState<string | null>(null);
+  const [changePasswordLoading, setChangePasswordLoading] = useState(false);
+
+  const handleChangePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setChangePasswordError(null);
+    setChangePasswordSuccess(null);
+
+    if (newPassword !== confirmPassword) {
+      setChangePasswordError("New passwords do not match.");
+      return;
+    }
+
+    if (newPassword.length < 4) {
+      setChangePasswordError("Password must be at least 4 characters long.");
+      return;
+    }
+
+    setChangePasswordLoading(true);
+
+    try {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: currentUser?.email,
+          currentPassword,
+          newPassword
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setChangePasswordSuccess("Password updated successfully!");
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+        
+        // Also update local state if user updated current session info
+        if (currentUser) {
+          const updatedUser = { ...currentUser, password: newPassword };
+          setCurrentUser(updatedUser);
+        }
+
+        setTimeout(() => {
+          setShowChangePasswordModal(false);
+          setChangePasswordSuccess(null);
+        }, 1500);
+      } else {
+        setChangePasswordError(data.error || "Failed to update password.");
+      }
+    } catch (err: any) {
+      setChangePasswordError(err.message || "Failed to connect to server.");
+    } finally {
+      setChangePasswordLoading(false);
+    }
   };
 
   // Real-time listeners once logged in
@@ -66,7 +117,35 @@ export default function App() {
     if (currentUser) {
       // Subscribe to all registered employees
       const unsubscribeEmployees = subscribeEmployees((updatedEmps) => {
-        setEmployees(updatedEmps);
+        const seen = new Set<string>();
+        const unique: any[] = [];
+        // Prioritize admin roles, email IDs, and those with phone numbers
+        const sorted = [...updatedEmps].sort((a, b) => {
+          const aIsAdmin = a.role === "admin" ? 1 : 0;
+          const bIsAdmin = b.role === "admin" ? 1 : 0;
+          if (aIsAdmin !== bIsAdmin) return bIsAdmin - aIsAdmin;
+
+          const aIsEmailId = (a.id || "").includes("@") ? 1 : 0;
+          const bIsEmailId = (b.id || "").includes("@") ? 1 : 0;
+          if (aIsEmailId !== bIsEmailId) return bIsEmailId - aIsEmailId;
+
+          const aHasPhone = a.phone ? 1 : 0;
+          const bHasPhone = b.phone ? 1 : 0;
+          return bHasPhone - aHasPhone;
+        });
+
+        for (const emp of sorted) {
+          const emailNorm = (emp.email || "").trim().toLowerCase();
+          const phoneNorm = (emp.phone || "").trim();
+          const idNorm = (emp.id || "").trim().toLowerCase();
+
+          const key = emailNorm || idNorm || phoneNorm;
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            unique.push(emp);
+          }
+        }
+        setEmployees(unique);
       });
 
       // Subscribe to projects (Admin gets all; Employees get their joined ones)
@@ -187,13 +266,29 @@ export default function App() {
               <p className="text-xs font-bold text-slate-800 truncate">{currentUser.name}</p>
               <p className="text-[10px] font-mono text-slate-400 font-medium truncate">{currentUser.email}</p>
             </div>
-            <button
-              onClick={handleLogout}
-              title="Sign Out Session"
-              className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => {
+                  setChangePasswordError(null);
+                  setChangePasswordSuccess(null);
+                  setCurrentPassword("");
+                  setNewPassword("");
+                  setConfirmPassword("");
+                  setShowChangePasswordModal(true);
+                }}
+                title="Change Password"
+                className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+              >
+                <Key className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handleLogout}
+                title="Sign Out Session"
+                className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       </aside>
@@ -367,6 +462,112 @@ export default function App() {
         </section>
 
       </div>
+
+      {/* CHANGE PASSWORD MODAL */}
+      <AnimatePresence>
+        {showChangePasswordModal && (
+          <div className="fixed inset-0 z-50 overflow-y-auto" id="change-password-modal">
+            <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowChangePasswordModal(false)}
+                className="fixed inset-0 transition-opacity bg-slate-900/60"
+              />
+              <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                className="inline-block w-full max-w-md p-6 my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-2xl rounded-2xl border border-slate-100 sm:align-middle"
+              >
+                <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+                  <div className="flex items-center gap-2">
+                    <Key className="w-4 h-4 text-indigo-600" />
+                    <h3 className="text-base font-extrabold text-slate-900 font-display">Change Your Password</h3>
+                  </div>
+                  <button
+                    onClick={() => setShowChangePasswordModal(false)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50"
+                  >
+                    <X className="w-4.5 h-4.5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleChangePasswordSubmit} className="space-y-4">
+                  {changePasswordError && (
+                    <div className="bg-red-50 text-red-700 p-3 rounded-xl flex items-start gap-2 text-xs border border-red-200">
+                      <AlertCircle className="w-4.5 h-4.5 shrink-0" />
+                      <span>{changePasswordError}</span>
+                    </div>
+                  )}
+
+                  {changePasswordSuccess && (
+                    <div className="bg-emerald-50 text-emerald-800 p-3 rounded-xl flex items-start gap-2 text-xs border border-emerald-200">
+                      <ShieldCheck className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
+                      <span>{changePasswordSuccess}</span>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Current Password</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="Enter your current password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium text-slate-800"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">New Password</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="At least 4 characters long"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium text-slate-800"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Confirm New Password</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="Repeat new password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium text-slate-800"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2.5 pt-4 border-t border-slate-100 mt-5">
+                    <button
+                      type="button"
+                      onClick={() => setShowChangePasswordModal(false)}
+                      className="px-4 py-2 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 text-xs font-semibold transition-all cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={changePasswordLoading}
+                      className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-md transition-all flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {changePasswordLoading ? "Updating..." : "Update Password"}
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

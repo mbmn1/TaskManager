@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS employees (
   email TEXT NOT NULL,
   phone TEXT,
   designation TEXT,
-  role TEXT DEFAULT 'employee' CHECK (role IN ('admin', 'employee'))
+  role TEXT DEFAULT 'employee' CHECK (role IN ('admin', 'employee')),
+  password TEXT DEFAULT '123456'
 );
 
 -- Enable row-level security (RLS) but default to allow all reads/writes if desired,
@@ -76,9 +77,9 @@ CREATE TABLE IF NOT EXISTS logs (
 ALTER TABLE logs DISABLE ROW LEVEL SECURITY;
 
 -- Seed default admin profiles (if you want to pre-populate)
-INSERT INTO employees (id, name, email, phone, designation, role)
+INSERT INTO employees (id, name, email, phone, designation, role, password)
 VALUES 
-  ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin'),
-  ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884897', 'Admin (Owner)', 'employee')
+  ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
+  ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884897', 'Admin (Owner)', 'employee', 'Mbmn@B!#!951')
 ON CONFLICT (id) DO UPDATE 
-SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role;
+SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role, password = EXCLUDED.password;
