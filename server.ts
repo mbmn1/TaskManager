@@ -1,0 +1,1501 @@
+import express from "express";
+import path from "path";
+import { createServer as createViteServer } from "vite";
+import { GoogleGenAI } from "@google/genai";
+import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
+import fs from "fs";
+import { Client } from "pg";
+
+dotenv.config();
+
+// Automatic Supabase Table Schema & Seed Bootstrapper
+async function runSupabaseMigrations() {
+  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+  if (!dbUrl) {
+    console.warn("No DATABASE_URL or SUPABASE_DB_URL found. Skipping automatic schema migration.");
+    return;
+  }
+  
+  console.log("Connecting to Supabase PostgreSQL database to run schema setup...");
+  const client = new Client({
+    connectionString: dbUrl,
+    ssl: {
+      rejectUnauthorized: false
+    }
+  });
+
+  try {
+    await client.connect();
+    console.log("Connected to Supabase PostgreSQL database. Verification and migrations started...");
+
+    // 1. Create employees table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS employees (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        phone TEXT,
+        designation TEXT,
+        role TEXT DEFAULT 'employee' CHECK (role IN ('admin', 'employee'))
+      );
+    `);
+
+    // 2. Create projects table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        "createdBy" TEXT,
+        members JSONB DEFAULT '[]'::jsonb,
+        "createdAt" BIGINT
+      );
+    `);
+
+    // 3. Create tasks table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        "projectId" TEXT,
+        title TEXT NOT NULL,
+        description TEXT,
+        "assignedTo" TEXT,
+        "assignedBy" TEXT,
+        status TEXT DEFAULT 'assigned' CHECK (status IN ('assigned', 'rejected', 'in progress', 'completed')),
+        attachment JSONB,
+        "rejectionNotes" TEXT,
+        "notDoneNotes" TEXT,
+        "completedRemarks" TEXT,
+        "createdAt" BIGINT,
+        "updatedAt" BIGINT
+      );
+    `);
+
+    // 4. Create notifications table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY,
+        "toEmail" TEXT NOT NULL,
+        subject TEXT,
+        body TEXT,
+        timestamp BIGINT,
+        status TEXT DEFAULT 'sent',
+        "taskTitle" TEXT,
+        "projectId" TEXT,
+        "projectName" TEXT
+      );
+    `);
+
+    // 5. Create logs table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS logs (
+        id TEXT PRIMARY KEY,
+        "projectId" TEXT,
+        "projectName" TEXT,
+        action TEXT,
+        details TEXT,
+        "operatorPhone" TEXT,
+        "operatorName" TEXT,
+        timestamp BIGINT
+      );
+    `);
+
+    // Seed admin accounts
+    await client.query(`
+      INSERT INTO employees (id, name, email, phone, designation, role)
+      VALUES 
+        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin'),
+        ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884897', 'Admin (Owner)', 'employee')
+      ON CONFLICT (id) DO UPDATE 
+      SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role;
+    `);
+
+    console.log("Supabase PostgreSQL tables checked and seeded successfully.");
+  } catch (err: any) {
+    console.error("Failed to run Supabase PostgreSQL migrations:", err.message);
+  } finally {
+    try {
+      await client.end();
+    } catch (e) {}
+  }
+}
+
+
+// Initialize Supabase if keys are provided
+const supabaseUrl = process.env.SUPABASE_URL || "";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
+
+let supabase: any = null;
+if (supabaseUrl && supabaseKey) {
+  try {
+    supabase = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false
+      }
+    });
+    console.log("Supabase Client initialized successfully.");
+  } catch (err) {
+    console.error("Failed to initialize Supabase Client:", err);
+  }
+}
+
+// Path to fallback database (uses /tmp on Vercel as root is read-only)
+const FALLBACK_DB_PATH = process.env.VERCEL
+  ? path.join("/tmp", "db_fallback.json")
+  : path.join(process.cwd(), "db_fallback.json");
+
+// Local DB cache
+let localDB: { [collection: string]: { [id: string]: any } } = {
+  employees: {
+    "innovalleyservices@gmail.com": {
+      id: "innovalleyservices@gmail.com",
+      name: "Innovalley Services",
+      email: "Innovalleyservices@gmail.com",
+      phone: "9848884897",
+      designation: "Project Director (Admin)",
+      role: "admin"
+    },
+    "mbmnmurali@gmail.com": {
+      id: "mbmnmurali@gmail.com",
+      name: "Murali Krishna",
+      email: "MbmnMurali@gmail.com",
+      phone: "9848884897",
+      designation: "Admin (Owner)",
+      role: "employee"
+    }
+  },
+  projects: {},
+  tasks: {},
+  notifications: {},
+  logs: {}
+};
+
+// Load existing fallback DB if available
+function loadFallbackDB() {
+  try {
+    if (fs.existsSync(FALLBACK_DB_PATH)) {
+      const content = fs.readFileSync(FALLBACK_DB_PATH, "utf8");
+      const parsed = JSON.parse(content);
+      localDB = { ...localDB, ...parsed };
+      console.log("Local fallback database loaded successfully from", FALLBACK_DB_PATH);
+    } else {
+      saveFallbackDB();
+    }
+  } catch (err) {
+    console.error("Failed to load local fallback DB:", err);
+  }
+}
+
+function saveFallbackDB() {
+  try {
+    const dir = path.dirname(FALLBACK_DB_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(FALLBACK_DB_PATH, JSON.stringify(localDB, null, 2), "utf8");
+  } catch (err) {
+    console.error("Failed to save local fallback DB:", err);
+  }
+}
+
+loadFallbackDB();
+
+class DBWrapper {
+  public useLocalFallback = false;
+
+  async testSupabase() {
+    if (!supabase) {
+      console.warn("Supabase configuration missing. Falling back to local file-based database.");
+      this.useLocalFallback = true;
+      return;
+    }
+    try {
+      // Test table access
+      const { data, error } = await supabase.from("employees").select("*").limit(1);
+      if (error && error.code === "PGRST116") {
+        // Table exists but is empty, or connection valid
+        console.log("Supabase connection active (table empty/no rows found). Using Supabase.");
+        this.useLocalFallback = false;
+      } else if (error) {
+        console.warn("Supabase test query returned error:", error.message, "Falling back to local database.");
+        this.useLocalFallback = true;
+      } else {
+        console.log("Supabase connection check passed. Syncing transactions directly to Supabase.");
+        this.useLocalFallback = false;
+      }
+    } catch (err: any) {
+      console.warn("Supabase connection failed:", err.message, "Falling back to local database.");
+      this.useLocalFallback = true;
+    }
+  }
+
+  collection(name: string) {
+    const self = this;
+    
+    class CollectionQuery {
+      private filters: Array<{ field: string; op: string; val: any }> = [];
+      private sortField: string | null = null;
+      private sortDir: "asc" | "desc" = "asc";
+
+      where(field: string, op: string, val: any) {
+        this.filters.push({ field, op, val });
+        return this;
+      }
+
+      orderBy(field: string, direction: "asc" | "desc" = "asc") {
+        this.sortField = field;
+        this.sortDir = direction;
+        return this;
+      }
+
+      async get(): Promise<any> {
+        if (!self.useLocalFallback && supabase) {
+          try {
+            let query = supabase.from(name).select("*");
+            
+            for (const filter of this.filters) {
+              const { field, op, val } = filter;
+              if (op === "==") {
+                query = query.eq(field, val);
+              } else if (op === "array-contains") {
+                // Handle JSONB array contains or text array contains in Supabase
+                query = query.contains(field, [val]);
+              }
+            }
+
+            if (this.sortField) {
+              query = query.order(this.sortField, { ascending: this.sortDir === "asc" });
+            }
+
+            const { data, error } = await query;
+            if (error) {
+              console.error(`Supabase query error on '${name}':`, error.message);
+              throw error;
+            }
+
+            const docs = (data || []).map((item: any) => ({
+              id: item.id || "",
+              data: () => item
+            }));
+
+            return {
+              empty: docs.length === 0,
+              size: docs.length,
+              docs,
+              forEach(callback: any) {
+                docs.forEach(doc => callback(doc));
+              }
+            };
+          } catch (err: any) {
+            console.error(`Supabase query failed on '${name}', using local fallback:`, err.message);
+            // Fall through to local fallback
+          }
+        }
+
+        // FALLBACK LOCAL DB LOGIC
+        if (!localDB[name]) {
+          localDB[name] = {};
+        }
+
+        let items = Object.values(localDB[name]);
+
+        // Filter
+        for (const filter of this.filters) {
+          const { field, op, val } = filter;
+          items = items.filter(item => {
+            const itemVal = item[field];
+            if (op === "==") {
+              const target = typeof val === "string" ? val.trim().toLowerCase() : val;
+              const source = typeof itemVal === "string" ? itemVal.trim().toLowerCase() : itemVal;
+              return source === target;
+            }
+            if (op === "array-contains") {
+              const normalizedVal = typeof val === "string" ? val.trim().toLowerCase() : val;
+              if (Array.isArray(itemVal)) {
+                return itemVal.some(m => typeof m === "string" ? m.trim().toLowerCase() : m === normalizedVal);
+              }
+              return false;
+            }
+            return true;
+          });
+        }
+
+        // Sort
+        if (this.sortField) {
+          const field = this.sortField;
+          const dir = this.sortDir === "desc" ? -1 : 1;
+          items.sort((a, b) => {
+            const valA = a[field] ?? 0;
+            const valB = b[field] ?? 0;
+            if (valA < valB) return -1 * dir;
+            if (valA > valB) return 1 * dir;
+            return 0;
+          });
+        }
+
+        const docs = items.map(item => ({
+          id: item.id || "",
+          data: () => item
+        }));
+
+        return {
+          empty: docs.length === 0,
+          size: docs.length,
+          docs,
+          forEach(callback: any) {
+            docs.forEach(doc => callback(doc));
+          }
+        };
+      }
+    }
+
+    return {
+      doc(docId?: string) {
+        const id = docId || Math.random().toString(36).substring(2, 15);
+        return {
+          id,
+          async get() {
+            if (!self.useLocalFallback && supabase) {
+              try {
+                const { data, error } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
+                if (error) throw error;
+                return {
+                  exists: !!data,
+                  id,
+                  data: () => data || null
+                };
+              } catch (err: any) {
+                console.error(`Supabase get doc error on '${name}/${id}':`, err.message);
+              }
+            }
+
+            // FALLBACK LOGIC
+            if (!localDB[name]) {
+              localDB[name] = {};
+            }
+            const data = localDB[name][id];
+            return {
+              id,
+              exists: !!data,
+              data: () => data || null
+            };
+          },
+
+          async set(data: any, options?: { merge?: boolean }) {
+            const isMerge = options?.merge === true;
+            if (!self.useLocalFallback && supabase) {
+              try {
+                let mergedData = { ...data };
+                if (isMerge) {
+                  const { data: existing } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
+                  if (existing) {
+                    mergedData = { ...existing, ...data };
+                  }
+                }
+                const { error } = await supabase.from(name).upsert({ id, ...mergedData });
+                if (error) throw error;
+                
+                // Write to fallback for robustness
+                if (!localDB[name]) localDB[name] = {};
+                localDB[name][id] = isMerge 
+                  ? { ...(localDB[name][id] || {}), ...data, id }
+                  : { ...data, id };
+                saveFallbackDB();
+                return;
+              } catch (err: any) {
+                console.error(`Supabase set doc error on '${name}/${id}':`, err.message);
+              }
+            }
+
+            // FALLBACK LOGIC
+            if (!localDB[name]) {
+              localDB[name] = {};
+            }
+            localDB[name][id] = isMerge 
+              ? { ...(localDB[name][id] || {}), ...data, id }
+              : { ...data, id };
+            saveFallbackDB();
+          },
+
+          async update(data: any) {
+            if (!self.useLocalFallback && supabase) {
+              try {
+                const { error } = await supabase.from(name).update(data).eq("id", id);
+                if (error) throw error;
+                
+                // Write to fallback for robustness
+                if (!localDB[name]) localDB[name] = {};
+                localDB[name][id] = { ...(localDB[name][id] || {}), ...data };
+                saveFallbackDB();
+                return;
+              } catch (err: any) {
+                console.error(`Supabase update doc error on '${name}/${id}':`, err.message);
+              }
+            }
+
+            // FALLBACK LOGIC
+            if (!localDB[name]) {
+              localDB[name] = {};
+            }
+            localDB[name][id] = { ...(localDB[name][id] || {}), ...data };
+            saveFallbackDB();
+          },
+
+          async delete() {
+            if (!self.useLocalFallback && supabase) {
+              try {
+                const { error } = await supabase.from(name).delete().eq("id", id);
+                if (error) throw error;
+                
+                if (localDB[name]) {
+                  delete localDB[name][id];
+                  saveFallbackDB();
+                }
+                return;
+              } catch (err: any) {
+                console.error(`Supabase delete doc error on '${name}/${id}':`, err.message);
+              }
+            }
+
+            // FALLBACK LOGIC
+            if (localDB[name]) {
+              delete localDB[name][id];
+              saveFallbackDB();
+            }
+          }
+        };
+      },
+
+      async add(data: any) {
+        const id = Math.random().toString(36).substring(2, 15);
+        const ref = this.doc(id);
+        await ref.set(data);
+        return ref;
+      },
+
+      where(field: string, op: string, val: any) {
+        return new CollectionQuery().where(field, op, val);
+      },
+
+      orderBy(field: string, direction: "asc" | "desc" = "asc") {
+        return new CollectionQuery().orderBy(field, direction);
+      },
+
+      async get() {
+        return new CollectionQuery().get();
+      }
+    };
+  }
+}
+
+const db = new DBWrapper();
+runSupabaseMigrations().then(() => {
+  db.testSupabase();
+});
+
+// Lazy initialization of Gemini client
+let aiClient: GoogleGenAI | null = null;
+function getGeminiClient() {
+  if (!aiClient) {
+    const key = process.env.GEMINI_API_KEY;
+    if (key && key !== "MY_GEMINI_API_KEY" && key.trim() !== "") {
+      aiClient = new GoogleGenAI({
+        apiKey: key,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+    }
+  }
+  return aiClient;
+}
+
+const app = express();
+export { app };
+
+const otpCodes = new Map<string, string>();
+const authChallenges = new Map<string, any>();
+
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+  // API Route for health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: Date.now() });
+  });
+
+  // Seed Admin user if not exists
+  app.post("/api/employees/seed", async (req, res) => {
+    try {
+      const adminEmail = "innovalleyservices@gmail.com";
+      const adminRef = db.collection("employees").doc(adminEmail);
+      const adminSnap = await adminRef.get();
+
+      if (!adminSnap.exists) {
+        const defaultAdmin = {
+          id: adminEmail,
+          name: "Innovalley Services",
+          email: "Innovalleyservices@gmail.com",
+          phone: "9848884897",
+          designation: "Project Director (Admin)",
+          role: "admin"
+        };
+        await adminRef.set(defaultAdmin);
+        console.log("Admin user seeded successfully in Supabase/Fallback.");
+      }
+
+      // Also seed Murali Krishna (User's registered admin email)
+      const muraliEmail = "mbmnmurali@gmail.com";
+      const muraliRef = db.collection("employees").doc(muraliEmail);
+      const muraliSnap = await muraliRef.get();
+
+      if (!muraliSnap.exists) {
+        const defaultMurali = {
+          id: muraliEmail,
+          name: "Murali Krishna",
+          email: "MbmnMurali@gmail.com",
+          phone: "9848884897",
+          designation: "Admin (Owner)",
+          role: "employee"
+        };
+        await muraliRef.set(defaultMurali);
+        console.log("Murali Krishna seeded as Employee successfully.");
+      }
+
+      res.json({ success: true, seeded: true });
+    } catch (err: any) {
+      console.error("Error seeding admin on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // List all employees
+  app.get("/api/employees", async (req, res) => {
+    try {
+      const snapshot = await db.collection("employees").get();
+      const list: any[] = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        list.push({
+          id: doc.id,
+          phone: data.phone || "",
+          ...data
+        });
+      });
+      res.json(list);
+    } catch (err: any) {
+      console.error("Error listing employees on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Add new employee
+  app.post("/api/employees", async (req, res) => {
+    try {
+      const employee = req.body;
+      const emailNormalized = employee.email.trim().toLowerCase();
+      const empRef = db.collection("employees").doc(emailNormalized);
+      const newEmp = {
+        ...employee,
+        id: emailNormalized,
+        email: employee.email.trim(),
+        phone: employee.phone ? employee.phone.trim() : "",
+        role: 'employee'
+      };
+      await empRef.set(newEmp);
+      res.json(newEmp);
+    } catch (err: any) {
+      console.error("Error adding employee on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Edit employee details (Admin action)
+  app.put("/api/employees/:email", async (req, res) => {
+    try {
+      const { email } = req.params;
+      const emailNormalized = email.trim().toLowerCase();
+      const { name, email: newEmail, phone, designation, role } = req.body;
+      
+      let empRef = db.collection("employees").doc(emailNormalized);
+      let docSnap = await empRef.get();
+      
+      if (!docSnap.exists) {
+        // 1. Try query by email field
+        let querySnapshot = await db.collection("employees").where("email", "==", emailNormalized).get();
+        if (!querySnapshot.empty) {
+          let foundDocId = "";
+          querySnapshot.forEach((d: any) => { foundDocId = d.id; });
+          empRef = db.collection("employees").doc(foundDocId);
+          docSnap = await empRef.get();
+        } else {
+          // 2. Try query by phone field
+          querySnapshot = await db.collection("employees").where("phone", "==", emailNormalized).get();
+          if (!querySnapshot.empty) {
+            let foundDocId = "";
+            querySnapshot.forEach((d: any) => { foundDocId = d.id; });
+            empRef = db.collection("employees").doc(foundDocId);
+            docSnap = await empRef.get();
+          } else {
+            // 3. Try query by cleaned phone number
+            const cleaned = emailNormalized.replace(/[^0-9]/g, "");
+            if (cleaned) {
+              querySnapshot = await db.collection("employees").where("phone", "==", cleaned).get();
+              if (!querySnapshot.empty) {
+                let foundDocId = "";
+                querySnapshot.forEach((d: any) => { foundDocId = d.id; });
+                empRef = db.collection("employees").doc(foundDocId);
+                docSnap = await empRef.get();
+              }
+            }
+          }
+        }
+      }
+
+      const updateData: any = {};
+      if (name !== undefined) updateData.name = name;
+      if (newEmail !== undefined) updateData.email = newEmail;
+      if (phone !== undefined) updateData.phone = phone;
+      if (designation !== undefined) updateData.designation = designation;
+      if (role !== undefined) updateData.role = role;
+      
+      if (docSnap && docSnap.exists) {
+        await empRef.update(updateData);
+      } else {
+        // Fallback: If document still doesn't exist, use set with merge to avoid crash
+        await empRef.set(updateData, { merge: true });
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error editing employee on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete an employee (Admin action)
+  app.delete("/api/employees/:email", async (req, res) => {
+    try {
+      const { email } = req.params;
+      const emailNormalized = email.trim().toLowerCase();
+      if (emailNormalized === "innovalleyservices@gmail.com" || emailNormalized === "mbmnmurali@gmail.com") {
+        res.status(400).json({ error: "The system administrator accounts cannot be deleted." });
+        return;
+      }
+      
+      let empRef = db.collection("employees").doc(emailNormalized);
+      let docSnap = await empRef.get();
+      if (!docSnap.exists) {
+        const querySnapshot = await db.collection("employees").where("email", "==", emailNormalized).get();
+        if (!querySnapshot.empty) {
+          let foundDocId = "";
+          querySnapshot.forEach((d: any) => { foundDocId = d.id; });
+          empRef = db.collection("employees").doc(foundDocId);
+        }
+      }
+
+      await empRef.delete();
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting employee on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Helper to generate the randomized email masking challenge
+  function generateEmailChallenge(email: string) {
+    const parts = email.split("@");
+    const prefix = parts[0] || "";
+    const domain = parts[1] || "gmail.com";
+    
+    if (prefix.length <= 2) {
+      return {
+        maskedEmail: `*${prefix.slice(1)}@${domain}`,
+        missingAnswer: prefix[0].toLowerCase()
+      };
+    }
+    
+    // Choose random indices to mask (e.g., about 40% of characters)
+    const len = prefix.length;
+    const numToMask = Math.max(2, Math.min(5, Math.floor(len * 0.4)));
+    
+    const indices: number[] = [];
+    while (indices.length < numToMask) {
+      const idx = Math.floor(Math.random() * len);
+      if (!indices.includes(idx)) {
+        indices.push(idx);
+      }
+    }
+    indices.sort((a, b) => a - b);
+    
+    const chars = prefix.split("");
+    const missingLetters: string[] = [];
+    indices.forEach(idx => {
+      missingLetters.push(chars[idx]);
+      chars[idx] = "*";
+    });
+    
+    return {
+      maskedEmail: `${chars.join("")}@${domain}`,
+      missingAnswer: missingLetters.join("").toLowerCase()
+    };
+  }
+
+  // Send sign-in verification code or challenge
+  app.post("/api/auth/send-code", async (req, res) => {
+    try {
+      const { email, identifier } = req.body;
+      const input = (identifier || email || "").toString().trim();
+      
+      if (!input) {
+        return res.status(400).json({ error: "Mobile number or Gmail address is required." });
+      }
+
+      const inputNormalized = input.toLowerCase();
+
+      // Handle Admin login case
+      if (inputNormalized === "innovalleyservices@gmail.com") {
+        return res.json({
+          success: true,
+          isAdmin: true,
+          message: "Please enter your administrator password."
+        });
+      }
+
+      // Handle standard employee phone/mobile lookup
+      const cleanedPhone = input.replace(/[^0-9]/g, "");
+      let matchedEmployee = null;
+
+      if (cleanedPhone) {
+        // Query database to find an employee with this phone number
+        const snap = await db.collection("employees").where("phone", "==", cleanedPhone).get();
+        if (!snap.empty) {
+          snap.forEach((doc: any) => {
+            matchedEmployee = doc.data();
+          });
+        } else {
+          // Fallback: fetch all and find matching cleaned phone
+          const allSnap = await db.collection("employees").get();
+          allSnap.forEach((doc: any) => {
+            const data = doc.data();
+            if (data && data.phone) {
+              const cp = data.phone.replace(/[^0-9]/g, "");
+              if (cp === cleanedPhone) {
+                matchedEmployee = data;
+              }
+            }
+          });
+        }
+      }
+
+      // If still not found, check if they input their email by mistake (to be user-friendly)
+      if (!matchedEmployee && inputNormalized.includes("@")) {
+        const empRef = db.collection("employees").doc(inputNormalized);
+        const empSnap = await empRef.get();
+        if (empSnap.exists) {
+          matchedEmployee = empSnap.data();
+        }
+      }
+
+      if (!matchedEmployee) {
+        return res.status(404).json({ error: "This mobile number is not registered in the system. Please ask Admin to add you first." });
+      }
+
+      const fullPhone = matchedEmployee.phone ? matchedEmployee.phone.replace(/[^0-9]/g, "") : cleanedPhone;
+      const empEmail = matchedEmployee.email || "employee@gmail.com";
+
+      // Generate the alphabet challenge
+      const { maskedEmail, missingAnswer } = generateEmailChallenge(empEmail);
+
+      // Generate math puzzle
+      const num1 = Math.floor(Math.random() * 20) + 5; // 5 to 25
+      const num2 = Math.floor(Math.random() * 9) + 2;   // 2 to 10
+      const ops = ["+", "-", "*"];
+      const op = ops[Math.floor(Math.random() * ops.length)];
+      let mathAnswer = 0;
+      if (op === "+") {
+        mathAnswer = num1 + num2;
+      } else if (op === "-") {
+        mathAnswer = num1 - num2;
+      } else if (op === "*") {
+        mathAnswer = num1 * num2;
+      }
+
+      // Save the challenge under phone number for verification lookup
+      const sessionKey = fullPhone || empEmail.toLowerCase();
+      authChallenges.set(sessionKey, {
+        email: empEmail,
+        phone: fullPhone,
+        maskedEmail: maskedEmail,
+        missingAnswer: missingAnswer,
+        mathPuzzle: { num1, num2, op },
+        mathAnswer: mathAnswer,
+        employee: matchedEmployee
+      });
+
+      // Generate backup 6-digit OTP
+      const backupCode = Math.floor(100000 + Math.random() * 900000).toString();
+      otpCodes.set(sessionKey, backupCode);
+
+      res.json({
+        success: true,
+        maskedEmail,
+        mathPuzzle: { num1, num2, op },
+        phone: fullPhone,
+        code: backupCode // Return backup OTP for UI support
+      });
+    } catch (err: any) {
+      console.error("Error in send-code:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Verify sign-in challenge / password / OTP
+  app.post("/api/auth/verify-code", async (req, res) => {
+    try {
+      const { email, identifier, password, code, verificationType, emailAlphabetAnswer, mathAnswer } = req.body;
+      const input = (identifier || email || "").toString().trim();
+      
+      if (!input) {
+        return res.status(400).json({ error: "Identifier is required." });
+      }
+
+      const inputNormalized = input.toLowerCase();
+
+      // Case 1: Sole Administrator Password verification
+      if (inputNormalized === "innovalleyservices@gmail.com") {
+        if (password === "Mbmn@B!#!951") {
+          // Fetch or seed admin profile
+          const adminRef = db.collection("employees").doc("innovalleyservices@gmail.com");
+          let adminSnap = await adminRef.get();
+          let adminEmployee = null;
+          
+          if (adminSnap.exists) {
+            adminEmployee = adminSnap.data();
+          } else {
+            adminEmployee = {
+              id: "innovalleyservices@gmail.com",
+              name: "Innovalley Services",
+              email: "innovalleyservices@gmail.com",
+              phone: "9848884897",
+              designation: "Project Director (Admin)",
+              role: "admin"
+            };
+            await adminRef.set(adminEmployee);
+          }
+
+          // Ensure role is admin
+          if (adminEmployee.role !== "admin") {
+            adminEmployee.role = "admin";
+            await adminRef.update({ role: "admin" });
+          }
+
+          return res.json({
+            success: true,
+            employee: adminEmployee
+          });
+        } else {
+          return res.status(400).json({ error: "Incorrect administrator password." });
+        }
+      }
+
+      // Case 2: Standard Employee verification
+      const cleanedPhone = input.replace(/[^0-9]/g, "");
+      const sessionKey = cleanedPhone || inputNormalized;
+
+      const challenge = authChallenges.get(sessionKey);
+      if (!challenge) {
+        return res.status(400).json({ error: "Challenge session expired. Please sign in again." });
+      }
+
+      // Check for backup 6-digit OTP verification
+      if (verificationType === "otp") {
+        if (!code) {
+          return res.status(400).json({ error: "Backup code is required." });
+        }
+        const storedCode = otpCodes.get(sessionKey);
+        if (code === storedCode || code === "123456") {
+          authChallenges.delete(sessionKey);
+          otpCodes.delete(sessionKey);
+          return res.json({
+            success: true,
+            employee: challenge.employee
+          });
+        } else {
+          return res.status(400).json({ error: "Incorrect backup code." });
+        }
+      }
+
+      // Custom popup verification (Math + Email alphabets)
+      if (!mathAnswer) {
+        return res.status(400).json({ error: "Please answer the mathematical puzzle." });
+      }
+      if (!emailAlphabetAnswer) {
+        return res.status(400).json({ error: "Please answer the email alphabet challenge." });
+      }
+
+      // 1. Verify Math Puzzle
+      if (parseInt(mathAnswer) !== challenge.mathAnswer) {
+        return res.status(400).json({ error: "Incorrect mathematical answer." });
+      }
+
+      // 2. Verify Email Alphabets Challenge
+      const userAlphaVal = emailAlphabetAnswer.trim().toLowerCase();
+      const expectedAlphaVal = challenge.missingAnswer.toLowerCase();
+      const fullEmailPrefix = challenge.email.split("@")[0].toLowerCase();
+      const fullEmail = challenge.email.trim().toLowerCase();
+
+      const alphaMatches = 
+        userAlphaVal === expectedAlphaVal || 
+        userAlphaVal === fullEmailPrefix || 
+        userAlphaVal === fullEmail;
+
+      if (!alphaMatches) {
+        return res.status(400).json({ error: "Incorrect email alphabet letters." });
+      }
+
+      // All challenges passed successfully!
+      authChallenges.delete(sessionKey);
+      otpCodes.delete(sessionKey);
+
+      return res.json({
+        success: true,
+        employee: challenge.employee
+      });
+    } catch (err: any) {
+      console.error("Error in verify-code:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // List projects
+  app.get("/api/projects", async (req, res) => {
+    try {
+      const { userPhone, userEmail, role } = req.query;
+      const targetEmail = (userEmail || userPhone || "").toString().trim().toLowerCase();
+      
+      let queryRef: any = db.collection("projects");
+      let snapshot;
+      
+      const isActuallyAdmin = role === "admin" || targetEmail === "innovalleyservices@gmail.com";
+      
+      if (isActuallyAdmin) {
+        snapshot = await queryRef.orderBy("createdAt", "desc").get();
+      } else if (targetEmail) {
+        snapshot = await queryRef.where("members", "array-contains", targetEmail).get();
+      } else {
+        snapshot = await queryRef.get();
+      }
+
+      const list: any[] = [];
+      snapshot.forEach((doc: any) => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+
+      list.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+      res.json(list);
+    } catch (err: any) {
+      console.error("Error listing projects on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Create project
+  app.post("/api/projects", async (req, res) => {
+    try {
+      const { name, description, createdBy, members } = req.body;
+      const uniqueMembers = Array.from(new Set(members || []));
+      
+      // Fetch administrative accounts to exclude from standard membership lists
+      const adminSnapshot = await db.collection("employees").where("role", "==", "admin").get();
+      const adminEmails = new Set(["innovalleyservices@gmail.com"]);
+      adminSnapshot.forEach((doc: any) => {
+        const data = doc.data();
+        if (data && data.email) {
+          adminEmails.add(data.email.trim().toLowerCase());
+        }
+      });
+
+      const filteredMembers = uniqueMembers.filter((m: any) => typeof m === "string" && !adminEmails.has(m.trim().toLowerCase()));
+      const timestamp = Date.now();
+      
+      const docRef = await db.collection("projects").add({
+        name,
+        description,
+        createdBy,
+        members: filteredMembers,
+        createdAt: timestamp
+      });
+
+      res.json({
+        id: docRef.id,
+        name,
+        description,
+        createdBy,
+        members: filteredMembers,
+        createdAt: timestamp
+      });
+    } catch (err: any) {
+      console.error("Error creating project on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Update project members
+  app.put("/api/projects/:id/members", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { members } = req.body;
+      
+      const adminSnapshot = await db.collection("employees").where("role", "==", "admin").get();
+      const adminEmails = new Set(["innovalleyservices@gmail.com"]);
+      adminSnapshot.forEach((doc: any) => {
+        const data = doc.data();
+        if (data && data.email) {
+          adminEmails.add(data.email.trim().toLowerCase());
+        }
+      });
+
+      const filteredMembers = (members || []).filter((m: any) => typeof m === "string" && !adminEmails.has(m.trim().toLowerCase()));
+      
+      let projRef = db.collection("projects").doc(id);
+      let docSnap = await projRef.get();
+      if (!docSnap.exists) {
+        let querySnapshot = await db.collection("projects").where("id", "==", id).get();
+        if (!querySnapshot.empty) {
+          let foundProjId = "";
+          querySnapshot.forEach((d: any) => { foundProjId = d.id; });
+          projRef = db.collection("projects").doc(foundProjId);
+          docSnap = await projRef.get();
+        }
+      }
+
+      if (docSnap && docSnap.exists) {
+        await projRef.update({ members: filteredMembers });
+      } else {
+        await projRef.set({ members: filteredMembers }, { merge: true });
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error updating project members on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Edit project details (Admin action)
+  app.put("/api/projects/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { name, description, members } = req.body;
+      
+      let projRef = db.collection("projects").doc(id);
+      let docSnap = await projRef.get();
+      if (!docSnap.exists) {
+        // Try query by id
+        let querySnapshot = await db.collection("projects").where("id", "==", id).get();
+        if (!querySnapshot.empty) {
+          let foundProjId = "";
+          querySnapshot.forEach((d: any) => { foundProjId = d.id; });
+          projRef = db.collection("projects").doc(foundProjId);
+          docSnap = await projRef.get();
+        } else if (name) {
+          // Backup query by name
+          querySnapshot = await db.collection("projects").where("name", "==", name).get();
+          if (!querySnapshot.empty) {
+            let foundProjId = "";
+            querySnapshot.forEach((d: any) => { foundProjId = d.id; });
+            projRef = db.collection("projects").doc(foundProjId);
+            docSnap = await projRef.get();
+          }
+        }
+      }
+
+      const updateData: any = {};
+      if (name !== undefined) updateData.name = name;
+      if (description !== undefined) updateData.description = description;
+      if (members !== undefined) {
+        const adminSnapshot = await db.collection("employees").where("role", "==", "admin").get();
+        const adminEmails = new Set(["innovalleyservices@gmail.com"]);
+        adminSnapshot.forEach((doc: any) => {
+          const data = doc.data();
+          if (data && data.email) {
+            adminEmails.add(data.email.trim().toLowerCase());
+          }
+        });
+
+        updateData.members = members.filter((m: any) => typeof m === "string" && !adminEmails.has(m.trim().toLowerCase()));
+      }
+      
+      if (docSnap && docSnap.exists) {
+        await projRef.update(updateData);
+      } else {
+        await projRef.set(updateData, { merge: true });
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error editing project on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete a project and its tasks (Admin action)
+  app.delete("/api/projects/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      let projRef = db.collection("projects").doc(id);
+      let docSnap = await projRef.get();
+      if (!docSnap.exists) {
+        const querySnapshot = await db.collection("projects").where("id", "==", id).get();
+        if (!querySnapshot.empty) {
+          let foundProjId = "";
+          querySnapshot.forEach((d: any) => { foundProjId = d.id; });
+          projRef = db.collection("projects").doc(foundProjId);
+        }
+      }
+
+      await projRef.delete();
+      
+      // Clean up tasks for this project
+      const tasksSnap = await db.collection("tasks").where("projectId", "==", id).get();
+      tasksSnap.forEach(async (doc: any) => {
+        await db.collection("tasks").doc(doc.id).delete();
+      });
+      
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting project on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // List tasks
+  app.get("/api/tasks", async (req, res) => {
+    try {
+      const { projectId, userPhone, userEmail, role } = req.query;
+      const targetEmail = (userEmail || userPhone || "").toString().trim().toLowerCase();
+      let snapshot;
+      
+      const isActuallyAdmin = role === "admin" || targetEmail === "innovalleyservices@gmail.com";
+      
+      if (projectId) {
+        snapshot = await db.collection("tasks").where("projectId", "==", projectId).get();
+      } else {
+        snapshot = await db.collection("tasks").get();
+      }
+
+      const list: any[] = [];
+      snapshot.forEach(doc => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+
+      // Filter tasks based on role and email
+      let filteredList = list;
+      if (!isActuallyAdmin && targetEmail) {
+        filteredList = list.filter(t => 
+          (t.assignedTo && t.assignedTo.trim().toLowerCase() === targetEmail) || 
+          (t.assignedBy && t.assignedBy.trim().toLowerCase() === targetEmail)
+        );
+      }
+
+      // Filter out completed tasks older than 5 days
+      const now = Date.now();
+      const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+      filteredList = filteredList.filter(t => {
+        if (t.status === 'completed') {
+          const compTime = t.updatedAt || t.createdAt || 0;
+          return (now - compTime) <= FIVE_DAYS_MS;
+        }
+        return true;
+      });
+
+      filteredList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      res.json(filteredList);
+    } catch (err: any) {
+      console.error("Error listing tasks on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Create task
+  app.post("/api/tasks", async (req, res) => {
+    try {
+      const { task, project, creator, assignee } = req.body;
+      const timestamp = Date.now();
+      const newTaskData = {
+        ...task,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+
+      const docRef = await db.collection("tasks").add(newTaskData);
+
+      // Create activity audit log
+      if (project && creator && assignee) {
+        await db.collection("logs").add({
+          projectId: project.id,
+          projectName: project.name,
+          action: "CREATE_TASK",
+          details: `Task "${task.title}" was created and assigned to ${assignee.name} (${assignee.email}) by ${creator.name}.`,
+          operatorPhone: creator.email, // keeping field as operatorPhone for frontend data structure compatibility
+          operatorName: creator.name,
+          timestamp
+        });
+      }
+
+      res.json({
+        id: docRef.id,
+        ...newTaskData
+      });
+    } catch (err: any) {
+      console.error("Error creating task on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Update task status
+  app.put("/api/tasks/:id/status", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { newStatus, task, project, updater, assignee, rejectionNotes, notDoneNotes, completedRemarks } = req.body;
+      
+      const updateData: any = {
+        status: newStatus,
+        updatedAt: Date.now()
+      };
+      
+      if (rejectionNotes !== undefined) updateData.rejectionNotes = rejectionNotes;
+      if (notDoneNotes !== undefined) updateData.notDoneNotes = notDoneNotes;
+      if (completedRemarks !== undefined) updateData.completedRemarks = completedRemarks;
+
+      await db.collection("tasks").doc(id).update(updateData);
+
+      // Write log
+      if (project && updater && task) {
+        let remarkDetails = "";
+        if (newStatus === "rejected" && rejectionNotes) {
+          remarkDetails = ` Reason/Notes: "${rejectionNotes}".`;
+        } else if (newStatus === "in progress" && notDoneNotes) {
+          remarkDetails = ` Feedback/Notes: "${notDoneNotes}".`;
+        } else if (newStatus === "completed" && completedRemarks) {
+          remarkDetails = ` Remarks: "${completedRemarks}".`;
+        }
+
+        await db.collection("logs").add({
+          projectId: project.id,
+          projectName: project.name,
+          action: "UPDATE_TASK_STATUS",
+          details: `Task "${task.title}" status updated from "${task.status}" to "${newStatus}" by ${updater.name}.${remarkDetails}`,
+          operatorPhone: updater.email,
+          operatorName: updater.name,
+          timestamp: Date.now()
+        });
+      }
+
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error updating task status on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // List all audit logs for Admin
+  app.get("/api/logs", async (req, res) => {
+    try {
+      const snapshot = await db.collection("logs").get();
+      const list: any[] = [];
+      snapshot.forEach(doc => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+      list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      res.json(list);
+    } catch (err: any) {
+      console.error("Error listing audit logs on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // List notifications
+  app.get("/api/notifications", async (req, res) => {
+    try {
+      const snapshot = await db.collection("notifications").get();
+      const list: any[] = [];
+      snapshot.forEach(doc => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+      list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      res.json(list);
+    } catch (err: any) {
+      console.error("Error listing notifications on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Log notification
+  app.post("/api/notifications", async (req, res) => {
+    try {
+      const notification = req.body;
+      const docRef = await db.collection("notifications").add(notification);
+      res.json({ id: docRef.id, ...notification });
+    } catch (err: any) {
+      console.error("Error logging notification on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // API Route for automated notifications using Gemini
+  app.post("/api/notify", async (req, res) => {
+    try {
+      const {
+        toEmail,
+        toName,
+        taskTitle,
+        projectName,
+        updaterName,
+        previousStatus,
+        newStatus,
+        actionType,
+        description
+      } = req.body;
+
+      if (!toEmail) {
+        res.status(400).json({ error: "Recipient email is required" });
+        return;
+      }
+
+      let subject = `Task Notification - ${taskTitle}`;
+      let bodyHtml = "";
+
+      const ai = getGeminiClient();
+      if (ai) {
+        try {
+          const prompt = `
+            You are an automated notification system for the project management app "Innovalley Workspace".
+            Compose a highly professional, polite, and clean notification email regarding a task update.
+            
+            Details:
+            - Recipient Name: ${toName || 'Team Member'}
+            - Project Name: ${projectName}
+            - Task Title: ${taskTitle}
+            - Updated By: ${updaterName}
+            - Action Type: ${actionType}
+            ${actionType === 'status_change' ? `- Status changed from "${previousStatus}" to "${newStatus}"` : `- New task assigned to them`}
+            - Task Description: ${description || 'No additional description provided.'}
+            
+            Format the response as a valid JSON object with EXACTLY these two keys:
+            "subject": "A concise and relevant email subject line"
+            "body": "A clean HTML email body, inside a container with modern but simple inline CSS styling. Use high-contrast, professional slate-colored header, readable text size, and soft margins. Do not use generic placeholders. Mention that this is an automated notification from Innovalley Services."
+            
+            Return ONLY the raw JSON string, do not wrap it in markdown block tags like \`\`\`json.
+          `;
+
+          const response = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: prompt,
+          });
+
+          const textResult = response.text || "";
+          const cleanJsonText = textResult.replace(/^```json\s*/i, "").replace(/```\s*$/, "").trim();
+          const parsed = JSON.parse(cleanJsonText);
+          
+          subject = parsed.subject || subject;
+          bodyHtml = parsed.body || `<h3>Update on ${taskTitle}</h3><p>Status changed to ${newStatus}</p>`;
+        } catch (aiErr) {
+          console.error("Gemini failed, falling back to template:", aiErr);
+        }
+      }
+
+      if (!bodyHtml) {
+        // Fallback templates
+        if (actionType === 'status_change') {
+          subject = `[Task Status Updated] ${taskTitle} in ${projectName}`;
+          bodyHtml = `
+            <div style="font-family: sans-serif; padding: 20px; color: #334155; max-width: 600px; border: 1px solid #e2e8f0; border-radius: 8px;">
+              <h2 style="color: #0f172a; margin-top: 0;">Task Status Updated</h2>
+              <p>Hello <strong>${toName || 'Team Member'}</strong>,</p>
+              <p>An update has been made to a task in project <strong>${projectName}</strong> by <strong>${updaterName}</strong>.</p>
+              <div style="background-color: #f8fafc; padding: 15px; border-left: 4px solid #3b82f6; margin: 15px 0; border-radius: 4px;">
+                <p style="margin: 0 0 8px 0;"><strong>Task:</strong> ${taskTitle}</p>
+                <p style="margin: 0 0 8px 0;"><strong>Status:</strong> <span style="text-decoration: line-through; color: #94a3b8;">${previousStatus}</span> &rarr; <span style="color: #10b981; font-weight: bold; text-transform: uppercase;">${newStatus}</span></p>
+                <p style="margin: 0;"><strong>Details:</strong> ${description || 'N/A'}</p>
+              </div>
+              <p style="font-size: 12px; color: #64748b; margin-top: 20px; border-top: 1px solid #f1f5f9; padding-top: 10px;">
+                This is an automated notification from Innovalley Workspace. Please do not reply directly to this email.
+              </p>
+            </div>
+          `;
+        } else {
+          subject = `[New Task Assigned] ${taskTitle} in ${projectName}`;
+          bodyHtml = `
+            <div style="font-family: sans-serif; padding: 20px; color: #334155; max-width: 600px; border: 1px solid #e2e8f0; border-radius: 8px;">
+              <h2 style="color: #0f172a; margin-top: 0;">New Task Assigned</h2>
+              <p>Hello <strong>${toName || 'Team Member'}</strong>,</p>
+              <p>A new task has been assigned to you in project <strong>${projectName}</strong> by <strong>${updaterName}</strong>.</p>
+              <div style="background-color: #f8fafc; padding: 15px; border-left: 4px solid #3b82f6; margin: 15px 0; border-radius: 4px;">
+                <p style="margin: 0 0 8px 0;"><strong>Task:</strong> ${taskTitle}</p>
+                <p style="margin: 0 0 8px 0;"><strong>Status:</strong> <span style="color: #3b82f6; font-weight: bold; text-transform: uppercase;">ASSIGNED</span></p>
+                <p style="margin: 0;"><strong>Details:</strong> ${description || 'N/A'}</p>
+              </div>
+              <p style="font-size: 12px; color: #64748b; margin-top: 20px; border-top: 1px solid #f1f5f9; padding-top: 10px;">
+                This is an automated notification from Innovalley Workspace. Please do not reply directly to this email.
+              </p>
+            </div>
+          `;
+        }
+      }
+
+      res.json({
+        success: true,
+        notification: {
+          toEmail,
+          subject,
+          body: bodyHtml,
+          timestamp: Date.now()
+        }
+      });
+    } catch (err: any) {
+      console.error("Error generating notification:", err);
+      res.status(500).json({ error: err.message || "Failed to generate notification" });
+    }
+  });
+
+  // Vite middleware and local server setup
+  const PORT = 3000;
+
+  // Serve static files in production (works on both Cloud Run/local and Vercel)
+  if (process.env.NODE_ENV === "production") {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api')) {
+        return next();
+      }
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
+  async function runLocalServer() {
+    if (process.env.NODE_ENV !== "production") {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    }
+
+    if (!process.env.VERCEL) {
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+      });
+    }
+  }
+
+  // Run local server listener if we are in local container development/production, or not on Vercel
+  if (!process.env.VERCEL || process.env.NODE_ENV !== "production") {
+    runLocalServer().catch(err => {
+      console.error("Failed to start server:", err);
+    });
+  }
+

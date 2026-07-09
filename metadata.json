@@ -1,0 +1,6 @@
+{
+  "name": "Firebase Task Manager",
+  "description": "A simple and responsive task management system with Firebase authentication (OTP), project isolation, task assignment, status updates, attachments, and email notifications.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
