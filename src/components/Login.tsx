@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { Lock, AlertCircle, UserCheck } from "lucide-react";
 import { motion } from "motion/react";
 import { Employee } from "../types";
-import { seedAdminUser } from "../lib/dbService";
+import { seedAdminUser, setSessionToken } from "../lib/dbService";
 
 interface LoginProps {
   onLoginSuccess: (user: Employee) => void;
@@ -12,104 +12,31 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [captchaId, setCaptchaId] = useState("");
-  const [captchaText, setCaptchaText] = useState("");
+  const [captchaImage, setCaptchaImage] = useState("");
   const [captchaInput, setCaptchaInput] = useState("");
+  const [captchaError, setCaptchaError] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
+  // The server renders the captcha image itself and never sends the plaintext answer to
+  // the client — verification happens purely server-side when the login form is submitted.
   const fetchCaptcha = async () => {
+    setCaptchaError(false);
     try {
       const res = await fetch("/api/auth/captcha");
       if (res.ok) {
         const data = await res.json();
         setCaptchaId(data.captchaId);
-        setCaptchaText(data.captchaText);
+        setCaptchaImage(data.image);
         setCaptchaInput("");
       } else {
-        generateLocalCaptcha();
+        setCaptchaError(true);
       }
     } catch (err) {
-      console.error("Error fetching captcha from server, falling back to local:", err);
-      generateLocalCaptcha();
+      console.error("Error fetching captcha from server:", err);
+      setCaptchaError(true);
     }
   };
-
-  const generateLocalCaptcha = () => {
-    try {
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // clear alphanumeric chars
-      let captchaTextStr = "";
-      for (let i = 0; i < 4; i++) {
-        captchaTextStr += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      setCaptchaId("local_captcha");
-      setCaptchaText(captchaTextStr);
-      setCaptchaInput("");
-    } catch (err) {
-      console.error("Error generating captcha locally:", err);
-    }
-  };
-
-  useEffect(() => {
-    if (captchaText && canvasRef.current) {
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        // Clear canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // Fill background with a dark slate color
-        ctx.fillStyle = "#0f172a"; // Slate 900
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // Draw random background grid and noisy dots
-        for (let i = 0; i < 40; i++) {
-          ctx.fillStyle = `rgba(${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, 0.18)`;
-          ctx.beginPath();
-          ctx.arc(Math.random() * canvas.width, Math.random() * canvas.height, Math.random() * 2 + 1, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Draw random noise lines
-        for (let i = 0; i < 4; i++) {
-          ctx.strokeStyle = `rgba(${Math.floor(Math.random() * 100) + 150}, ${Math.floor(Math.random() * 100) + 150}, ${Math.floor(Math.random() * 100) + 150}, 0.4)`;
-          ctx.lineWidth = Math.random() * 1.5 + 1;
-          ctx.beginPath();
-          ctx.moveTo(Math.random() * canvas.width, Math.random() * canvas.height);
-          ctx.lineTo(Math.random() * canvas.width, Math.random() * canvas.height);
-          ctx.stroke();
-        }
-
-        // Draw captcha letters with individual rotation and placement distortion
-        ctx.font = "bold 20px 'JetBrains Mono', Courier, monospace";
-        ctx.textBaseline = "middle";
-
-        // Reserve 36px on the right for the absolute refresh button to prevent overlap
-        const usableWidth = canvas.width - 36;
-        const letterSpacing = usableWidth / (captchaText.length + 1);
-        for (let i = 0; i < captchaText.length; i++) {
-          const char = captchaText[i];
-          const x = letterSpacing * (i + 1) + (Math.random() * 4 - 2);
-          const y = canvas.height / 2 + (Math.random() * 4 - 2);
-          
-          // Apply randomized slight rotation
-          const rotationAngle = (Math.random() * 30 - 15) * Math.PI / 180;
-
-          ctx.save();
-          ctx.translate(x, y);
-          ctx.rotate(rotationAngle);
-
-          // Alternating bright aesthetic colors
-          const colors = ["#818cf8", "#6366f1", "#4f46e5", "#38bdf8", "#34d399"];
-          ctx.fillStyle = colors[i % colors.length];
-
-          ctx.fillText(char, 0, 0);
-          ctx.restore();
-        }
-      }
-    }
-  }, [captchaText]);
 
   useEffect(() => {
     // Seed default admin first
@@ -136,16 +63,9 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       setLoading(false);
       return;
     }
-    if (!capVal) {
+    if (!captchaId || !capVal) {
       setError("Please enter the captcha verification code.");
       setLoading(false);
-      return;
-    }
-
-    if (capVal.toUpperCase() !== (captchaText || "").toUpperCase()) {
-      setError("Incorrect captcha code. Please try again.");
-      setLoading(false);
-      fetchCaptcha();
       return;
     }
 
@@ -169,6 +89,9 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       }
 
       if (res.ok && data.success && data.employee) {
+        if (data.token) {
+          setSessionToken(data.token);
+        }
         onLoginSuccess(data.employee);
       } else {
         setError(data.error || "Incorrect credentials or captcha code.");
@@ -199,7 +122,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-6 shadow-xl rounded-2xl border border-slate-100 sm:px-10">
           {error && (
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg flex items-start gap-2 text-sm"
@@ -259,13 +182,14 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               <div className="grid grid-cols-2 gap-3 items-center">
                 {/* Visual Captcha Block */}
                 <div className="relative h-12 bg-slate-900 text-slate-200 rounded-xl flex items-center justify-center border border-slate-800 select-none overflow-hidden">
-                  <canvas 
-                    ref={canvasRef} 
-                    width={160} 
-                    height={48} 
-                    className="w-full h-full object-contain px-4" 
-                  />
-                  
+                  {captchaError ? (
+                    <span className="text-[10px] text-red-300 px-2 text-center">Failed to load. Tap refresh.</span>
+                  ) : captchaImage ? (
+                    <img src={captchaImage} alt="Captcha" className="w-full h-full object-contain px-4" />
+                  ) : (
+                    <span className="text-[10px] text-slate-400">Loading...</span>
+                  )}
+
                   {/* Absolute Refresh Button on Right */}
                   <button
                     type="button"

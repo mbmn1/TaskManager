@@ -39,7 +39,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   // Subscribe to all tasks to track completed tasks per project
   const [allTasks, setAllTasks] = useState<Task[]>([]);
   useEffect(() => {
-    const unsubscribe = subscribeAllTasks(currentUser.email || "", currentUser.role || "", (tasks) => {
+    const unsubscribe = subscribeAllTasks(currentUser.email || "", currentUser.phone || "", currentUser.role || "", (tasks) => {
       setAllTasks(tasks);
     });
     return () => unsubscribe();
@@ -245,7 +245,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
         email: editEmpEmail.trim().toLowerCase(),
         designation: editEmpDesignation,
         role: editEmpRole,
-        password: editEmpPassword
+        ...(editEmpPassword.trim() ? { password: editEmpPassword.trim() } : {})
       });
       if (res && res.error) {
         setEditEmpError(res.error);
@@ -531,7 +531,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                                     setEditEmpEmail(emp.email);
                                     setEditEmpDesignation(emp.designation || "");
                                     setEditEmpRole(emp.role || "employee");
-                                    setEditEmpPassword(emp.password || "");
+                                    setEditEmpPassword("");
                                     setEditEmpError(null);
                                   }}
                                   className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
@@ -935,8 +935,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">Change / Update Password</label>
                     <input
                       type="text"
-                      required
-                      placeholder="Enter new password"
+                      placeholder="Leave blank to keep current password"
                       value={editEmpPassword}
                       onChange={(e) => setEditEmpPassword(e.target.value)}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium text-slate-800"

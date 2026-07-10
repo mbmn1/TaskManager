@@ -1,9 +1,29 @@
 import { Employee, Project, Task, EmailNotification, AuditLog, TaskAttachment } from "../types";
 
+const TOKEN_KEY = "innovalley_session_token";
+
+export const getSessionToken = () => localStorage.getItem(TOKEN_KEY);
+export const setSessionToken = (token: string) => localStorage.setItem(TOKEN_KEY, token);
+export const clearSessionToken = () => localStorage.removeItem(TOKEN_KEY);
+
+// Attaches the signed session token (issued at login) to every API request so the
+// server can authenticate/authorize the caller instead of trusting client-supplied identity.
+const authFetch = async (url: string, options: RequestInit = {}) => {
+  const token = getSessionToken();
+  const headers = new Headers(options.headers || {});
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401) {
+    clearSessionToken();
+    window.dispatchEvent(new Event("innovalley:session-expired"));
+  }
+  return res;
+};
+
 // Seed Admin user
 export const seedAdminUser = async () => {
   try {
-    const res = await fetch("/api/employees/seed", {
+    const res = await authFetch("/api/employees/seed", {
       method: "POST",
       headers: { "Content-Type": "application/json" }
     });
@@ -21,7 +41,7 @@ export const seedAdminUser = async () => {
 export const subscribeEmployees = (callback: (employees: Employee[]) => void) => {
   const fetchEmployees = async () => {
     try {
-      const res = await fetch("/api/employees");
+      const res = await authFetch("/api/employees");
       if (res.ok) {
         const data = await res.json();
         callback(data);
@@ -38,7 +58,7 @@ export const subscribeEmployees = (callback: (employees: Employee[]) => void) =>
 
 // Add new employee (Admin action)
 export const addEmployee = async (employee: Omit<Employee, 'id' | 'role'>) => {
-  const res = await fetch("/api/employees", {
+  const res = await authFetch("/api/employees", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(employee)
@@ -50,7 +70,7 @@ export const addEmployee = async (employee: Omit<Employee, 'id' | 'role'>) => {
 export const subscribeProjects = (userEmail: string, userRole: 'admin' | 'employee', callback: (projects: Project[]) => void) => {
   const fetchProjects = async () => {
     try {
-      const res = await fetch(`/api/projects?userEmail=${encodeURIComponent(userEmail)}&role=${userRole}`);
+      const res = await authFetch(`/api/projects?userEmail=${encodeURIComponent(userEmail)}&role=${userRole}`);
       if (res.ok) {
         const data = await res.json();
         callback(data);
@@ -67,7 +87,7 @@ export const subscribeProjects = (userEmail: string, userRole: 'admin' | 'employ
 
 // Create a project (Admin action)
 export const createProject = async (name: string, description: string, createdBy: string, members: string[]) => {
-  const res = await fetch("/api/projects", {
+  const res = await authFetch("/api/projects", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, description, createdBy, members })
@@ -77,7 +97,7 @@ export const createProject = async (name: string, description: string, createdBy
 
 // Update project members
 export const updateProjectMembers = async (projectId: string, members: string[]) => {
-  const res = await fetch(`/api/projects/${projectId}/members`, {
+  const res = await authFetch(`/api/projects/${projectId}/members`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ members })
@@ -87,7 +107,7 @@ export const updateProjectMembers = async (projectId: string, members: string[])
 
 // Delete employee (Admin action)
 export const deleteEmployee = async (email: string) => {
-  const res = await fetch(`/api/employees/${encodeURIComponent(email)}`, {
+  const res = await authFetch(`/api/employees/${encodeURIComponent(email)}`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" }
   });
@@ -96,7 +116,7 @@ export const deleteEmployee = async (email: string) => {
 
 // Delete project (Admin action)
 export const deleteProject = async (projectId: string) => {
-  const res = await fetch(`/api/projects/${projectId}`, {
+  const res = await authFetch(`/api/projects/${projectId}`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" }
   });
@@ -105,7 +125,7 @@ export const deleteProject = async (projectId: string) => {
 
 // Delete completed tasks project-wise (Admin action)
 export const deleteCompletedTasks = async (projectId: string) => {
-  const res = await fetch(`/api/projects/${projectId}/tasks/completed`, {
+  const res = await authFetch(`/api/projects/${projectId}/tasks/completed`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" }
   });
@@ -114,7 +134,7 @@ export const deleteCompletedTasks = async (projectId: string) => {
 
 // Update employee details (Admin action)
 export const updateEmployee = async (phone: string, employee: Partial<Omit<Employee, 'id' | 'phone'>>) => {
-  const res = await fetch(`/api/employees/${encodeURIComponent(phone)}`, {
+  const res = await authFetch(`/api/employees/${encodeURIComponent(phone)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(employee)
@@ -124,7 +144,7 @@ export const updateEmployee = async (phone: string, employee: Partial<Omit<Emplo
 
 // Update project details (Admin action)
 export const updateProject = async (projectId: string, project: { name?: string, description?: string, members?: string[] }) => {
-  const res = await fetch(`/api/projects/${projectId}`, {
+  const res = await authFetch(`/api/projects/${projectId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(project)
@@ -133,10 +153,10 @@ export const updateProject = async (projectId: string, project: { name?: string,
 };
 
 // Listen to tasks for a specific project
-export const subscribeTasks = (projectId: string, userEmail: string, userRole: string, callback: (tasks: Task[]) => void) => {
+export const subscribeTasks = (projectId: string, userEmail: string, userPhone: string, userRole: string, callback: (tasks: Task[]) => void) => {
   const fetchTasks = async () => {
     try {
-      const res = await fetch(`/api/tasks?projectId=${projectId}&userEmail=${encodeURIComponent(userEmail)}&role=${userRole}`);
+      const res = await authFetch(`/api/tasks?projectId=${projectId}&userEmail=${encodeURIComponent(userEmail)}&userPhone=${encodeURIComponent(userPhone)}&role=${userRole}`);
       if (res.ok) {
         const data = await res.json();
         callback(data);
@@ -152,10 +172,10 @@ export const subscribeTasks = (projectId: string, userEmail: string, userRole: s
 };
 
 // Subscribe to all tasks (for general statistics and tracking)
-export const subscribeAllTasks = (userEmail: string, userRole: string, callback: (tasks: Task[]) => void) => {
+export const subscribeAllTasks = (userEmail: string, userPhone: string, userRole: string, callback: (tasks: Task[]) => void) => {
   const fetchAllTasks = async () => {
     try {
-      const res = await fetch(`/api/tasks?userEmail=${encodeURIComponent(userEmail)}&role=${userRole}`);
+      const res = await authFetch(`/api/tasks?userEmail=${encodeURIComponent(userEmail)}&userPhone=${encodeURIComponent(userPhone)}&role=${userRole}`);
       if (res.ok) {
         const data = await res.json();
         callback(data);
@@ -184,7 +204,7 @@ const sendAutomatedNotification = async (params: {
   projectId: string;
 }) => {
   try {
-    const response = await fetch("/api/notify", {
+    const response = await authFetch("/api/notify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params)
@@ -194,7 +214,7 @@ const sendAutomatedNotification = async (params: {
       const data = await response.json();
       if (data.success && data.notification) {
         // Record notification via API proxy
-        await fetch("/api/notifications", {
+        await authFetch("/api/notifications", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -213,16 +233,16 @@ const sendAutomatedNotification = async (params: {
 
 // Create a task and send automated email notification
 export const createTask = async (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>, project: Project, creator: Employee, assignee: Employee) => {
-  const res = await fetch("/api/tasks", {
+  const res = await authFetch("/api/tasks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ task, project, creator, assignee })
   });
-  
+
   if (!res.ok) {
     throw new Error("Failed to create task on server.");
   }
-  
+
   const createdTask = await res.json();
 
   // Trigger automated notification in the background
@@ -245,9 +265,9 @@ export const createTask = async (task: Omit<Task, 'id' | 'createdAt' | 'updatedA
 
 // Update task status and trigger notification
 export const updateTaskStatus = async (
-  task: Task, 
-  newStatus: 'assigned' | 'rejected' | 'in progress' | 'completed', 
-  project: Project, 
+  task: Task,
+  newStatus: 'assigned' | 'rejected' | 'in progress' | 'completed',
+  project: Project,
   updater: Employee,
   assignee: Employee,
   extra?: {
@@ -257,14 +277,14 @@ export const updateTaskStatus = async (
     completionAttachment?: TaskAttachment | null;
   }
 ) => {
-  const res = await fetch(`/api/tasks/${task.id}/status`, {
+  const res = await authFetch(`/api/tasks/${task.id}/status`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ 
-      newStatus, 
-      task, 
-      project, 
-      updater, 
+    body: JSON.stringify({
+      newStatus,
+      task,
+      project,
+      updater,
       assignee,
       rejectionNotes: extra?.rejectionNotes,
       notDoneNotes: extra?.notDoneNotes,
@@ -284,7 +304,7 @@ export const updateTaskStatus = async (
   notificationEmails.add(assignee.email);
 
   try {
-    const empRes = await fetch("/api/employees");
+    const empRes = await authFetch("/api/employees");
     if (empRes.ok) {
       const emps: Employee[] = await empRes.json();
       emps.forEach(emp => {
@@ -321,7 +341,7 @@ export const updateTaskStatus = async (
 export const subscribeNotifications = (callback: (notifications: EmailNotification[]) => void) => {
   const fetchNotifications = async () => {
     try {
-      const res = await fetch("/api/notifications");
+      const res = await authFetch("/api/notifications");
       if (res.ok) {
         const data = await res.json();
         callback(data);
@@ -340,7 +360,7 @@ export const subscribeNotifications = (callback: (notifications: EmailNotificati
 export const subscribeAuditLogs = (callback: (logs: AuditLog[]) => void) => {
   const fetchLogs = async () => {
     try {
-      const res = await fetch("/api/logs");
+      const res = await authFetch("/api/logs");
       if (res.ok) {
         const data = await res.json();
         callback(data);

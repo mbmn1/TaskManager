@@ -17,24 +17,44 @@ import {
   AlertCircle
 } from "lucide-react";
 import { Employee, Project } from "./types";
-import { subscribeEmployees, subscribeProjects, seedAdminUser } from "./lib/dbService";
+import { subscribeEmployees, subscribeProjects, seedAdminUser, getSessionToken, clearSessionToken } from "./lib/dbService";
 import Login from "./components/Login";
 import ProjectBoard from "./components/ProjectBoard";
 import AdminPanel from "./components/AdminPanel";
 import ProgressTracker from "./components/ProgressTracker";
 import { motion, AnimatePresence } from "motion/react";
 
+const USER_CACHE_KEY = "innovalley_cached_user";
+
+function loadCachedUser(): Employee | null {
+  try {
+    const token = getSessionToken();
+    const cached = localStorage.getItem(USER_CACHE_KEY);
+    if (token && cached) return JSON.parse(cached);
+  } catch {
+    // ignore malformed cache
+  }
+  return null;
+}
+
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<Employee | null>(null);
+  const [currentUser, setCurrentUser] = useState<Employee | null>(loadCachedUser);
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [activeTab, setActiveTab] = useState<'board' | 'progress' | 'employees' | 'projects' | 'logs'>('board');
+  const [activeTab, setActiveTab] = useState<'board' | 'progress' | 'employees' | 'projects' | 'logs'>(
+    loadCachedUser()?.role === 'admin' ? 'progress' : 'board'
+  );
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Handle successful login
   const handleLoginSuccess = (user: Employee) => {
     setCurrentUser(user);
+    try {
+      localStorage.setItem(USER_CACHE_KEY, JSON.stringify(user));
+    } catch {
+      // ignore storage failures (e.g. private browsing)
+    }
     if (user.role === 'admin') {
       setActiveTab('progress');
     } else {
@@ -45,7 +65,20 @@ export default function App() {
   // Handle Logout
   const handleLogout = () => {
     setCurrentUser(null);
+    clearSessionToken();
+    try {
+      localStorage.removeItem(USER_CACHE_KEY);
+    } catch {
+      // ignore storage failures
+    }
   };
+
+  // If the server rejects our session token (expired, or secret rotated), fall back to the login screen.
+  useEffect(() => {
+    const onSessionExpired = () => handleLogout();
+    window.addEventListener("innovalley:session-expired", onSessionExpired);
+    return () => window.removeEventListener("innovalley:session-expired", onSessionExpired);
+  }, []);
 
   // Change Password state
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
@@ -74,9 +107,13 @@ export default function App() {
     setChangePasswordLoading(true);
 
     try {
+      const token = getSessionToken();
       const res = await fetch("/api/auth/change-password", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           email: currentUser?.email,
           currentPassword,
@@ -90,12 +127,6 @@ export default function App() {
         setCurrentPassword("");
         setNewPassword("");
         setConfirmPassword("");
-        
-        // Also update local state if user updated current session info
-        if (currentUser) {
-          const updatedUser = { ...currentUser, password: newPassword };
-          setCurrentUser(updatedUser);
-        }
 
         setTimeout(() => {
           setShowChangePasswordModal(false);

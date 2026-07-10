@@ -93,7 +93,7 @@ export default function ProjectBoard({ currentUser, employees, projects }: Proje
   useEffect(() => {
     if (selectedProjectId) {
       setLoadingTasks(true);
-      const unsubscribe = subscribeTasks(selectedProjectId, currentUser.email || "", currentUser.role, (updatedTasks) => {
+      const unsubscribe = subscribeTasks(selectedProjectId, currentUser.email || "", currentUser.phone || "", currentUser.role, (updatedTasks) => {
         setTasks(updatedTasks);
         setLoadingTasks(false);
       });

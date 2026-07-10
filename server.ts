@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
@@ -178,13 +177,15 @@ async function runSupabaseMigrations() {
       DELETE FROM employees WHERE id IN ('9848884897', '9848884899');
     `);
 
-    await client.query(`
-      INSERT INTO employees (id, name, email, phone, designation, role, password)
-      VALUES 
-        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
-        ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884899', 'Lead Developer', 'employee', 'Mbmn@B!#!951')
-      ON CONFLICT (id) DO NOTHING;
-    `);
+    const seededDefaultHash = hashPassword("Mbmn@B!#!951");
+    await client.query(
+      `INSERT INTO employees (id, name, email, phone, designation, role, password)
+       VALUES
+         ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', $1),
+         ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884899', 'Lead Developer', 'employee', $1)
+       ON CONFLICT (id) DO NOTHING;`,
+      [seededDefaultHash]
+    );
 
     console.log("Supabase PostgreSQL tables checked, RLS bypassed, and seeded successfully.");
   } catch (err: any) {
@@ -215,6 +216,14 @@ if (supabaseUrl && supabaseKey) {
   } catch (err) {
     console.error("Failed to initialize Supabase Client:", err);
   }
+}
+
+if (process.env.VERCEL && !supabase) {
+  console.error(
+    "CRITICAL: Deployed on Vercel without Supabase configured. All data will be held " +
+    "in ephemeral in-memory state and lost between cold starts/deployments. Set SUPABASE_URL " +
+    "and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY) in the Vercel project's Environment Variables."
+  );
 }
 
 // Local DB in-memory cache (no file persistence)
@@ -260,7 +269,7 @@ class DBWrapper {
         phone: "9848884897",
         designation: "Project Director (Admin)",
         role: "admin",
-        password: "Mbmn@B!#!951"
+        password: hashPassword("Mbmn@B!#!951")
       };
 
       const defaultDev = {
@@ -270,13 +279,16 @@ class DBWrapper {
         phone: "9848884899",
         designation: "Lead Developer",
         role: "employee",
-        password: "Mbmn@B!#!951"
+        password: hashPassword("Mbmn@B!#!951")
       };
 
-      const { error: adminErr } = await supabase.from("employees").upsert(defaultAdmin);
+      // ignoreDuplicates: only inserts if the row doesn't exist yet — a plain upsert would
+      // silently reset the admin/dev password back to this default on every cold start,
+      // wiping out any password change made via the change-password feature.
+      const { error: adminErr } = await supabase.from("employees").upsert(defaultAdmin, { onConflict: "id", ignoreDuplicates: true });
       if (adminErr) console.warn("Supabase REST admin seeding warning:", adminErr.message);
 
-      const { error: devErr } = await supabase.from("employees").upsert(defaultDev);
+      const { error: devErr } = await supabase.from("employees").upsert(defaultDev, { onConflict: "id", ignoreDuplicates: true });
       if (devErr) console.warn("Supabase REST developer seeding warning:", devErr.message);
 
       console.log("Successfully validated/seeded Admin and Developer accounts via REST API.");
@@ -603,6 +615,79 @@ const otpCodes = new Map<string, string>();
 const authChallenges = new Map<string, any>();
 const captchaStore = new Map<string, string>();
 
+function getAppSecret(): string {
+  return process.env.JWT_SECRET || "innovalley-secure-salt-2026";
+}
+
+// --- Password hashing (scrypt, no extra dependency) ---
+// Existing accounts predate hashing and store plaintext; verifyPassword accepts both
+// and login() lazily upgrades a plaintext record to a hash on the next successful login.
+function hashPassword(plain: string): string {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(plain, salt, 64).toString("hex");
+  return `scrypt$${salt}$${hash}`;
+}
+
+function verifyPassword(plain: string, stored: string): boolean {
+  if (!stored) return false;
+  if (stored.startsWith("scrypt$")) {
+    const [, salt, hash] = stored.split("$");
+    if (!salt || !hash) return false;
+    try {
+      const candidate = crypto.scryptSync(plain, salt, 64);
+      const expected = Buffer.from(hash, "hex");
+      return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
+    } catch {
+      return false;
+    }
+  }
+  return plain === stored;
+}
+
+// --- Session tokens (HMAC-signed, stateless — works across serverless instances) ---
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function createSessionToken(employee: { id: string; email: string; role: string }): string {
+  const payload = { id: employee.id, email: employee.email, role: employee.role, iat: Date.now() };
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", getAppSecret()).update(payloadB64).digest("base64url");
+  return `${payloadB64}.${sig}`;
+}
+
+function verifySessionToken(token: string): { id: string; email: string; role: string; iat: number } | null {
+  try {
+    const [payloadB64, sig] = token.split(".");
+    if (!payloadB64 || !sig) return null;
+    const expectedSig = crypto.createHmac("sha256", getAppSecret()).update(payloadB64).digest("base64url");
+    const sigBuf = Buffer.from(sig);
+    const expectedBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) return null;
+    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+    if (!payload.iat || Date.now() - payload.iat > SESSION_TTL_MS) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function requireAuth(req: any, res: any, next: any) {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  const payload = token ? verifySessionToken(token) : null;
+  if (!payload) {
+    return res.status(401).json({ error: "Session expired or invalid. Please log in again." });
+  }
+  req.authUser = payload;
+  next();
+}
+
+function requireAdmin(req: any, res: any, next: any) {
+  if (req.authUser?.role !== "admin") {
+    return res.status(403).json({ error: "Administrator access required." });
+  }
+  next();
+}
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -636,7 +721,11 @@ app.use((req, res, next) => {
 
   // API Route for health check
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", timestamp: Date.now() });
+    res.json({
+      status: "ok",
+      timestamp: Date.now(),
+      database: supabase ? "supabase" : "in-memory-fallback (data will not persist)"
+    });
   });
 
   // Seed Admin and Developer users if they do not exist
@@ -656,7 +745,7 @@ app.use((req, res, next) => {
           phone: "9848884897",
           designation: "Project Director (Admin)",
           role: "admin",
-          password: "Mbmn@B!#!951"
+          password: hashPassword("Mbmn@B!#!951")
         };
         await adminRef.set(defaultAdmin);
         console.log("Admin user seeded successfully in Supabase/Fallback.");
@@ -673,7 +762,7 @@ app.use((req, res, next) => {
           phone: "9848884899",
           designation: "Lead Developer",
           role: "employee",
-          password: "Mbmn@B!#!951"
+          password: hashPassword("Mbmn@B!#!951")
         };
         await devRef.set(defaultDev);
         console.log("Developer user seeded successfully in Supabase/Fallback.");
@@ -696,16 +785,16 @@ app.use((req, res, next) => {
   });
 
   // List all employees
-  app.get("/api/employees", async (req, res) => {
+  app.get("/api/employees", requireAuth, async (req, res) => {
     try {
       const snapshot = await db.collection("employees").get();
       const list: any[] = [];
       snapshot.forEach(doc => {
-        const data = doc.data();
+        const { password, ...safeData } = doc.data() || {};
         list.push({
           id: doc.id,
-          phone: data.phone || "",
-          ...data
+          phone: safeData.phone || "",
+          ...safeData
         });
       });
       res.json(list);
@@ -716,7 +805,7 @@ app.use((req, res, next) => {
   });
 
   // Add new employee
-  app.post("/api/employees", async (req, res) => {
+  app.post("/api/employees", requireAuth, requireAdmin, async (req, res) => {
     try {
       const employee = req.body;
       const phoneNormalized = employee.phone ? employee.phone.replace(/[^0-9]/g, "") : "";
@@ -736,11 +825,12 @@ app.use((req, res, next) => {
         id: phoneNormalized,
         email: emailNormalized,
         phone: phoneNormalized,
-        password: employee.password ? employee.password.trim() : "123456",
+        password: hashPassword(employee.password ? employee.password.trim() : "123456"),
         role: 'employee'
       };
       await empRef.set(newEmp);
-      res.json(newEmp);
+      const { password: _newEmpPassword, ...safeNewEmp } = newEmp;
+      res.json(safeNewEmp);
     } catch (err: any) {
       console.error("Error adding employee on server:", err);
       res.status(500).json({ error: err.message });
@@ -748,11 +838,18 @@ app.use((req, res, next) => {
   });
 
   // Edit employee details (Admin action)
-  app.put("/api/employees/:email", async (req, res) => {
+  app.put("/api/employees/:email", requireAuth, async (req: any, res) => {
     try {
       const { email } = req.params;
       const emailNormalized = email.trim().toLowerCase();
       const { name, email: newEmail, phone, designation, role } = req.body;
+
+      // Role and password are the two fields that could let any logged-in employee
+      // grant themselves admin (defeating the admin-only project/employee-creation rules)
+      // or take over another employee's account. Everything else is open, per product decision.
+      if ((role !== undefined || req.body.password) && req.authUser.role !== "admin") {
+        return res.status(403).json({ error: "Only administrators can change role or password from this screen." });
+      }
       
       let empRef = db.collection("employees").doc(emailNormalized);
       let docSnap = await empRef.get();
@@ -795,7 +892,7 @@ app.use((req, res, next) => {
       if (phone !== undefined) updateData.phone = phone;
       if (designation !== undefined) updateData.designation = designation;
       if (role !== undefined) updateData.role = role;
-      if (req.body.password !== undefined) updateData.password = req.body.password;
+      if (req.body.password) updateData.password = hashPassword(req.body.password);
       
       if (docSnap && docSnap.exists) {
         await empRef.update(updateData);
@@ -811,7 +908,7 @@ app.use((req, res, next) => {
   });
 
   // Delete an employee (Admin action)
-  app.delete("/api/employees/:email", async (req, res) => {
+  app.delete("/api/employees/:email", requireAuth, async (req, res) => {
     try {
       const { email } = req.params;
       const emailNormalized = email.trim().toLowerCase();
@@ -905,7 +1002,9 @@ app.use((req, res, next) => {
     };
   }
 
-  // Generate a new alphanumeric captcha (stateless signature-based to support multi-container/serverless)
+  // Generate a new alphanumeric captcha (stateless signature-based to support multi-container/serverless).
+  // The plaintext answer is rendered into an SVG image server-side and never sent to the client as text —
+  // sending it in the JSON response (as this used to) makes the captcha trivially readable by the caller.
   app.get("/api/auth/captcha", (req, res) => {
     try {
       const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // clear alphanumeric chars
@@ -913,13 +1012,39 @@ app.use((req, res, next) => {
       for (let i = 0; i < 4; i++) {
         captchaText += chars.charAt(Math.floor(Math.random() * chars.length));
       }
-      
+
       const timestamp = Date.now();
-      const salt = process.env.JWT_SECRET || "innovalley-secure-salt-2026";
-      const hash = crypto.createHmac("sha256", salt).update(`${timestamp}-${captchaText}`).digest("hex");
+      const hash = crypto.createHmac("sha256", getAppSecret()).update(`${timestamp}-${captchaText}`).digest("hex");
       const captchaId = `${timestamp}.${hash}`;
 
-      res.json({ captchaId, captchaText });
+      const width = 160, height = 48;
+      const colors = ["#818cf8", "#6366f1", "#4f46e5", "#38bdf8", "#34d399"];
+      let noise = "";
+      for (let i = 0; i < 30; i++) {
+        const cx = (Math.random() * width).toFixed(1);
+        const cy = (Math.random() * height).toFixed(1);
+        const r = (Math.random() * 2 + 1).toFixed(1);
+        noise += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="rgba(${Math.floor(Math.random() * 255)},${Math.floor(Math.random() * 255)},${Math.floor(Math.random() * 255)},0.18)" />`;
+      }
+      for (let i = 0; i < 4; i++) {
+        const x1 = (Math.random() * width).toFixed(1), y1 = (Math.random() * height).toFixed(1);
+        const x2 = (Math.random() * width).toFixed(1), y2 = (Math.random() * height).toFixed(1);
+        const c = Math.floor(Math.random() * 100) + 150;
+        noise += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="rgba(${c},${c},${c},0.4)" stroke-width="1.5" />`;
+      }
+      let letters = "";
+      const usableWidth = width - 20;
+      const spacing = usableWidth / (captchaText.length + 1);
+      for (let i = 0; i < captchaText.length; i++) {
+        const x = (spacing * (i + 1) + 10 + (Math.random() * 4 - 2)).toFixed(1);
+        const y = (height / 2 + 7 + (Math.random() * 4 - 2)).toFixed(1);
+        const rotation = (Math.random() * 30 - 15).toFixed(1);
+        letters += `<text x="${x}" y="${y}" transform="rotate(${rotation} ${x} ${y})" font-family="'JetBrains Mono', Courier, monospace" font-weight="bold" font-size="20" fill="${colors[i % colors.length]}">${captchaText[i]}</text>`;
+      }
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="${width}" height="${height}" fill="#0f172a"/>${noise}${letters}</svg>`;
+      const image = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+
+      res.json({ captchaId, image });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -937,35 +1062,32 @@ app.use((req, res, next) => {
         return res.status(400).json({ error: "Email/Phone and Password are required." });
       }
 
-      if (captchaId !== "local_captcha") {
-        if (!captchaId || !capIn) {
-          return res.status(400).json({ error: "Captcha verification is required." });
+      // Captcha verification is always required — there is no bypass value.
+      if (!captchaId || !capIn) {
+        return res.status(400).json({ error: "Captcha verification is required." });
+      }
+
+      try {
+        const parts = captchaId.split(".");
+        if (parts.length !== 2) {
+          return res.status(400).json({ error: "Invalid captcha session. Please reload captcha." });
         }
 
-        // Verify captcha statelessly
-        try {
-          const parts = captchaId.split(".");
-          if (parts.length !== 2) {
-            return res.status(400).json({ error: "Invalid captcha session. Please reload captcha." });
-          }
-          
-          const [timestampStr, originalHash] = parts;
-          const timestamp = parseInt(timestampStr, 10);
-          
-          // 15 minutes expiration check
-          if (isNaN(timestamp) || Date.now() - timestamp > 15 * 60 * 1000) {
-            return res.status(400).json({ error: "Captcha session expired. Please reload the captcha." });
-          }
-          
-          const salt = process.env.JWT_SECRET || "innovalley-secure-salt-2026";
-          const expectedHash = crypto.createHmac("sha256", salt).update(`${timestampStr}-${capIn}`).digest("hex");
-          
-          if (originalHash !== expectedHash) {
-            return res.status(400).json({ error: "Incorrect captcha code. Please try again." });
-          }
-        } catch (err) {
-          return res.status(400).json({ error: "Failed to verify captcha. Please try again." });
+        const [timestampStr, originalHash] = parts;
+        const timestamp = parseInt(timestampStr, 10);
+
+        // 15 minutes expiration check
+        if (isNaN(timestamp) || Date.now() - timestamp > 15 * 60 * 1000) {
+          return res.status(400).json({ error: "Captcha session expired. Please reload the captcha." });
         }
+
+        const expectedHash = crypto.createHmac("sha256", getAppSecret()).update(`${timestampStr}-${capIn}`).digest("hex");
+
+        if (originalHash !== expectedHash) {
+          return res.status(400).json({ error: "Incorrect captcha code. Please try again." });
+        }
+      } catch (err) {
+        return res.status(400).json({ error: "Failed to verify captcha. Please try again." });
       }
 
       const inputNormalized = input.toLowerCase();
@@ -1007,13 +1129,25 @@ app.use((req, res, next) => {
 
       // Check password
       const dbPassword = matchedEmployee.password || "123456"; // default fallback for pre-existing accounts
-      if (pass !== dbPassword) {
+      if (!verifyPassword(pass, dbPassword)) {
         return res.status(400).json({ error: "Incorrect password. Please try again." });
       }
 
+      // Lazily upgrade legacy plaintext passwords to a hash now that we know the plaintext value.
+      if (!dbPassword.startsWith("scrypt$")) {
+        try {
+          await db.collection("employees").doc(matchedEmployee.id).update({ password: hashPassword(pass) });
+        } catch (e) {
+          console.warn("Failed to upgrade legacy password hash for", matchedEmployee.id, e);
+        }
+      }
+
+      const token = createSessionToken(matchedEmployee);
+      const { password: _matchedPassword, ...safeEmployee } = matchedEmployee;
       return res.json({
         success: true,
-        employee: matchedEmployee
+        employee: safeEmployee,
+        token
       });
     } catch (err: any) {
       console.error("Login error:", err);
@@ -1022,28 +1156,34 @@ app.use((req, res, next) => {
   });
 
   // User changes their own password
-  app.post("/api/auth/change-password", async (req, res) => {
+  app.post("/api/auth/change-password", requireAuth, async (req: any, res) => {
     try {
       const { email, currentPassword, newPassword } = req.body;
-      const emailNormalized = email.trim().toLowerCase();
-      
+      const emailNormalized = (email || "").trim().toLowerCase();
+
+      if (req.authUser.role !== "admin" && req.authUser.email !== emailNormalized) {
+        return res.status(403).json({ error: "You can only change your own password." });
+      }
+
+      if (!newPassword || newPassword.length < 4) {
+        return res.status(400).json({ error: "New password must be at least 4 characters long." });
+      }
+
       const empRef = db.collection("employees").doc(emailNormalized);
       const docSnap = await empRef.get();
-      
+
       if (!docSnap.exists) {
         return res.status(404).json({ error: "Employee profile not found." });
       }
-      
+
       const employeeData = docSnap.data();
       const dbPassword = employeeData.password || "123456"; // Default password fallback
-      
-      const isCurrentCorrect = currentPassword === dbPassword;
-        
-      if (!isCurrentCorrect) {
+
+      if (!verifyPassword(currentPassword, dbPassword)) {
         return res.status(400).json({ error: "Incorrect current password." });
       }
-      
-      await empRef.update({ password: newPassword });
+
+      await empRef.update({ password: hashPassword(newPassword) });
       res.json({ success: true, message: "Password updated successfully!" });
     } catch (err: any) {
       console.error("Error changing password:", err);
@@ -1052,7 +1192,7 @@ app.use((req, res, next) => {
   });
 
   // List projects
-  app.get("/api/projects", async (req, res) => {
+  app.get("/api/projects", requireAuth, async (req, res) => {
     try {
       const { userPhone, userEmail, role } = req.query;
       const targetEmail = (userEmail || userPhone || "").toString().trim().toLowerCase();
@@ -1084,7 +1224,7 @@ app.use((req, res, next) => {
   });
 
   // Create project
-  app.post("/api/projects", async (req, res) => {
+  app.post("/api/projects", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { name, description, createdBy, members } = req.body;
       const uniqueMembers = Array.from(new Set(members || []));
@@ -1125,7 +1265,7 @@ app.use((req, res, next) => {
   });
 
   // Update project members
-  app.put("/api/projects/:id/members", async (req, res) => {
+  app.put("/api/projects/:id/members", requireAuth, async (req, res) => {
     try {
       const { id } = req.params;
       const { members } = req.body;
@@ -1166,7 +1306,7 @@ app.use((req, res, next) => {
   });
 
   // Edit project details (Admin action)
-  app.put("/api/projects/:id", async (req, res) => {
+  app.put("/api/projects/:id", requireAuth, async (req, res) => {
     try {
       const { id } = req.params;
       const { name, description, members } = req.body;
@@ -1222,7 +1362,7 @@ app.use((req, res, next) => {
   });
 
   // Delete a project and its tasks (Admin action)
-  app.delete("/api/projects/:id", async (req, res) => {
+  app.delete("/api/projects/:id", requireAuth, async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -1253,7 +1393,7 @@ app.use((req, res, next) => {
   });
 
   // Delete completed tasks for a specific project (Admin action)
-  app.delete("/api/projects/:projectId/tasks/completed", async (req, res) => {
+  app.delete("/api/projects/:projectId/tasks/completed", requireAuth, async (req, res) => {
     try {
       const { projectId } = req.params;
       const tasksSnap = await db.collection("tasks").where("projectId", "==", projectId).get();
@@ -1277,10 +1417,11 @@ app.use((req, res, next) => {
   });
 
   // List tasks
-  app.get("/api/tasks", async (req, res) => {
+  app.get("/api/tasks", requireAuth, async (req, res) => {
     try {
       const { projectId, userPhone, userEmail, role } = req.query;
-      const targetEmail = (userEmail || userPhone || "").toString().trim().toLowerCase();
+      const targetEmail = (userEmail || "").toString().trim().toLowerCase();
+      const targetPhone = (userPhone || "").toString().trim();
       let snapshot;
       
       const isActuallyAdmin = role === "admin";
@@ -1296,12 +1437,14 @@ app.use((req, res, next) => {
         list.push({ id: doc.id, ...doc.data() });
       });
 
-      // Filter tasks based on role and email
+      // Filter tasks based on role and identity. assignedTo/assignedBy are stored as phone
+      // numbers (see POST /api/tasks), so matching on email alone silently dropped every task
+      // for non-admin users — match against both.
       let filteredList = list;
-      if (!isActuallyAdmin && targetEmail) {
-        filteredList = list.filter(t => 
-          (t.assignedTo && t.assignedTo.trim().toLowerCase() === targetEmail) || 
-          (t.assignedBy && t.assignedBy.trim().toLowerCase() === targetEmail)
+      if (!isActuallyAdmin && (targetEmail || targetPhone)) {
+        filteredList = list.filter(t =>
+          (t.assignedTo && ((targetEmail && t.assignedTo.trim().toLowerCase() === targetEmail) || (targetPhone && t.assignedTo === targetPhone))) ||
+          (t.assignedBy && ((targetEmail && t.assignedBy.trim().toLowerCase() === targetEmail) || (targetPhone && t.assignedBy === targetPhone)))
         );
       }
 
@@ -1325,7 +1468,7 @@ app.use((req, res, next) => {
   });
 
   // Create task
-  app.post("/api/tasks", async (req, res) => {
+  app.post("/api/tasks", requireAuth, async (req, res) => {
     try {
       const { task, project, creator, assignee } = req.body;
       const timestamp = Date.now();
@@ -1361,11 +1504,16 @@ app.use((req, res, next) => {
   });
 
   // Update task status
-  app.put("/api/tasks/:id/status", async (req, res) => {
+  app.put("/api/tasks/:id/status", requireAuth, async (req: any, res) => {
     try {
       const { id } = req.params;
       const { newStatus, task, project, updater, assignee, rejectionNotes, notDoneNotes, completedRemarks, attachment, completionAttachment } = req.body;
-      
+
+      const assigneeEmail = (assignee?.email || "").trim().toLowerCase();
+      if (req.authUser.role !== "admin" && req.authUser.email !== assigneeEmail) {
+        return res.status(403).json({ error: "You can only update tasks assigned to you." });
+      }
+
       const updateData: any = {
         status: newStatus,
         updatedAt: Date.now()
@@ -1409,7 +1557,7 @@ app.use((req, res, next) => {
   });
 
   // List all audit logs for Admin
-  app.get("/api/logs", async (req, res) => {
+  app.get("/api/logs", requireAuth, async (req, res) => {
     try {
       const snapshot = await db.collection("logs").get();
       const list: any[] = [];
@@ -1425,7 +1573,7 @@ app.use((req, res, next) => {
   });
 
   // List notifications
-  app.get("/api/notifications", async (req, res) => {
+  app.get("/api/notifications", requireAuth, async (req, res) => {
     try {
       const snapshot = await db.collection("notifications").get();
       const list: any[] = [];
@@ -1441,7 +1589,7 @@ app.use((req, res, next) => {
   });
 
   // Log notification
-  app.post("/api/notifications", async (req, res) => {
+  app.post("/api/notifications", requireAuth, async (req, res) => {
     try {
       const notification = req.body;
       const docRef = await db.collection("notifications").add(notification);
@@ -1453,7 +1601,7 @@ app.use((req, res, next) => {
   });
 
   // API Route for automated notifications using Gemini
-  app.post("/api/notify", async (req, res) => {
+  app.post("/api/notify", requireAuth, async (req, res) => {
     try {
       const {
         toEmail,
@@ -1571,8 +1719,10 @@ app.use((req, res, next) => {
   // Vite middleware and local server setup
   const PORT = 3000;
 
-  // Serve static files in production (works on both Cloud Run/local and Vercel)
-  if (process.env.NODE_ENV === "production") {
+  // Serve static files in production (Cloud Run/local container only — on Vercel,
+  // vercel.json rewrites already route static assets straight to the CDN and this
+  // function's deployment bundle doesn't contain the built `dist` folder anyway).
+  if (process.env.NODE_ENV === "production" && !process.env.VERCEL) {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res, next) => {
@@ -1585,6 +1735,9 @@ app.use((req, res, next) => {
 
   async function runLocalServer() {
     if (process.env.NODE_ENV !== "production") {
+      // Loaded dynamically so Vite (a dev-only dependency) is never pulled into
+      // the Vercel serverless function bundle, which only ever runs the production branch.
+      const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: "spa",
