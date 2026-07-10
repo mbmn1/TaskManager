@@ -51,14 +51,16 @@ async function runSupabaseMigrations() {
   
   const dbUrl = sanitizeDatabaseUrl(rawDbUrl);
   console.log("Connecting to Supabase PostgreSQL database to run schema setup...");
-  const client = new Client({
-    connectionString: dbUrl,
-    ssl: {
-      rejectUnauthorized: false
-    }
-  });
+  let client: any = null;
 
   try {
+    client = new Client({
+      connectionString: dbUrl,
+      ssl: {
+        rejectUnauthorized: false
+      }
+    });
+
     await client.connect();
     console.log("Connected to Supabase PostgreSQL database. Verification and migrations started...");
 
@@ -171,16 +173,15 @@ async function runSupabaseMigrations() {
     }
 
     // Seed admin accounts
-    // Clean up old phone-number based IDs first to keep table strictly clean
+    // Clean up old phone-number based IDs and unwanted employee accounts first to keep table strictly clean
     await client.query(`
-      DELETE FROM employees WHERE id IN ('9848884897', '9848884899');
+      DELETE FROM employees WHERE id IN ('9848884897', '9848884899', 'mbmnmurali@gmail.com');
     `);
 
     await client.query(`
       INSERT INTO employees (id, name, email, phone, designation, role, password)
       VALUES 
-        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
-        ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884897', 'Lead Developer', 'employee', 'Mbmn@B!#!951')
+        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951')
       ON CONFLICT (id) DO UPDATE 
       SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role, password = EXCLUDED.password;
     `);
@@ -189,9 +190,11 @@ async function runSupabaseMigrations() {
   } catch (err: any) {
     console.error("Failed to run Supabase PostgreSQL migrations:", err.message);
   } finally {
-    try {
-      await client.end();
-    } catch (e) {}
+    if (client) {
+      try {
+        await client.end();
+      } catch (e) {}
+    }
   }
 }
 
@@ -225,15 +228,6 @@ let localDB: { [collection: string]: { [id: string]: any } } = {
       designation: "Project Director (Admin)",
       role: "admin",
       password: "Mbmn@B!#!951"
-    },
-    "mbmnmurali@gmail.com": {
-      id: "mbmnmurali@gmail.com",
-      name: "Murali Krishna",
-      email: "mbmnmurali@gmail.com",
-      phone: "9848884897",
-      designation: "Lead Developer",
-      role: "employee",
-      password: "Mbmn@B!#!951"
     }
   },
   projects: {},
@@ -253,6 +247,44 @@ class DBWrapper {
     }
     this.useLocalFallback = false;
     console.log("Supabase client active. Strict sync enabled with zero local fallback.");
+
+    try {
+      console.log("Cleaning up old and unwanted employee accounts from remote Supabase via REST API...");
+      
+      const { error: delErr } = await supabase
+        .from("employees")
+        .delete()
+        .in("id", ["9848884897", "9848884899", "mbmnmurali@gmail.com"]);
+        
+      if (delErr) {
+        console.warn("Supabase REST cleanup warning:", delErr.message);
+      } else {
+        console.log("Successfully cleaned up old/unwanted employee accounts in Supabase via REST API.");
+      }
+
+      const adminId = "innovalleyservices@gmail.com";
+      const defaultAdmin = {
+        id: adminId,
+        name: "Innovalley Services",
+        email: adminId,
+        phone: "9848884897",
+        designation: "Project Director (Admin)",
+        role: "admin",
+        password: "Mbmn@B!#!951"
+      };
+
+      const { error: seedErr } = await supabase
+        .from("employees")
+        .upsert(defaultAdmin);
+
+      if (seedErr) {
+        console.warn("Supabase REST admin seeding warning:", seedErr.message);
+      } else {
+        console.log("Successfully seeded/updated Admin user in Supabase via REST API.");
+      }
+    } catch (err: any) {
+      console.error("Error performing Supabase REST initialization/cleanup:", err.message);
+    }
   }
 
   checkRLSError(err: any) {
@@ -539,9 +571,13 @@ class DBWrapper {
 }
 
 const db = new DBWrapper();
-runSupabaseMigrations().then(() => {
-  db.testSupabase();
-});
+runSupabaseMigrations()
+  .then(() => {
+    db.testSupabase();
+  })
+  .catch((err) => {
+    console.error("Critical error in runSupabaseMigrations on startup:", err);
+  });
 
 // Lazy initialization of Gemini client
 let aiClient: GoogleGenAI | null = null;
@@ -628,20 +664,11 @@ app.use((req, res, next) => {
         console.log("Admin user seeded successfully in Supabase/Fallback.");
       }
 
-      const devRef = db.collection("employees").doc(devId);
-      const devSnap = await devRef.get();
-      if (!devSnap.exists) {
-        const defaultDev = {
-          id: devId,
-          name: "Murali Krishna",
-          email: "mbmnmurali@gmail.com",
-          phone: "9848884897",
-          designation: "Lead Developer",
-          role: "employee",
-          password: "Mbmn@B!#!951"
-        };
-        await devRef.set(defaultDev);
-        console.log("Dev user seeded successfully in Supabase/Fallback.");
+      // Explicitly delete any old employee account if present
+      try {
+        await db.collection("employees").doc(devId).delete();
+      } catch (e) {
+        console.warn("Could not delete dev account:", e);
       }
 
       // Cleanup old phone-based documents to keep database clean

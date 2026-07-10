@@ -223,7 +223,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                   type="text"
                   id="identifier"
                   required
-                  placeholder="e.g. mbmnmurali@gmail.com or 9848884897"
+                  placeholder="e.g. innovalleyservices@gmail.com or 9848884897"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-900 placeholder-slate-400 font-medium transition-all text-sm"

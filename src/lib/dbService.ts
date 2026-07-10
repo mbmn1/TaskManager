@@ -7,6 +7,10 @@ export const seedAdminUser = async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" }
     });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Server returned status ${res.status}: ${text}`);
+    }
     return await res.json();
   } catch (error) {
     console.error("Error seeding admin user:", error);
