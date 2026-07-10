@@ -567,6 +567,23 @@ const captchaStore = new Map<string, string>();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Monitor and log all server errors (status >= 400) to a local file for diagnosis
+app.use((req, res, next) => {
+  const originalSend = res.send;
+  res.send = function (body) {
+    if (res.statusCode >= 400) {
+      try {
+        const logMsg = `[${new Date().toISOString()}] ${req.method} ${req.url} - Status: ${res.statusCode} - Body: ${typeof body === 'string' ? body : JSON.stringify(body)}\n`;
+        fs.appendFileSync(path.join(process.cwd(), "server-errors.log"), logMsg);
+      } catch (logErr) {
+        console.error("Failed to write to error log file:", logErr);
+      }
+    }
+    return originalSend.apply(res, arguments as any);
+  };
+  next();
+});
+
 // Prevent caching for all API endpoints to ensure maximum data privacy and zero local storing/caching
 app.use((req, res, next) => {
   if (req.url.startsWith("/api/")) {
