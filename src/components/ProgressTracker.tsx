@@ -39,11 +39,11 @@ export default function ProgressTracker({ currentUser, employees, projects }: Pr
   const overallCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
   const currentUserEmailNorm = (currentUser.email || "").toLowerCase().trim();
-  const isUserAdmin = currentUser.role === 'admin' || currentUserEmailNorm === 'innovalleyservices@gmail.com';
+  const isUserAdmin = currentUser.role === 'admin';
 
   // Calculate individual member metrics for real-time employee task loading
   const memberMetrics: MemberMetric[] = employees
-    .filter(emp => emp.role !== "admin" && (emp.email || "").toLowerCase().trim() !== "innovalleyservices@gmail.com")
+    .filter(emp => emp.role !== "admin")
     .filter(emp => {
       if (isUserAdmin) return true;
       const empEmailNorm = (emp.email || "").toLowerCase().trim();

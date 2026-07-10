@@ -816,12 +816,6 @@ app.use((req, res, next) => {
       const { email } = req.params;
       const emailNormalized = email.trim().toLowerCase();
       
-      // Block deleting admin by email or phone
-      if (emailNormalized === "innovalleyservices@gmail.com" || emailNormalized === "9848884897") {
-        res.status(400).json({ error: "The system administrator accounts cannot be deleted." });
-        return;
-      }
-      
       let empRef = db.collection("employees").doc(emailNormalized);
       let docSnap = await empRef.get();
       if (!docSnap.exists) {
@@ -831,6 +825,7 @@ app.use((req, res, next) => {
           let foundDocId = "";
           querySnapshot.forEach((d: any) => { foundDocId = d.id; });
           empRef = db.collection("employees").doc(foundDocId);
+          docSnap = await empRef.get();
         } else {
           // 2. Try query by phone field
           querySnapshot = await db.collection("employees").where("phone", "==", emailNormalized).get();
@@ -838,6 +833,7 @@ app.use((req, res, next) => {
             let foundDocId = "";
             querySnapshot.forEach((d: any) => { foundDocId = d.id; });
             empRef = db.collection("employees").doc(foundDocId);
+            docSnap = await empRef.get();
           } else {
             // 3. Try query by cleaned phone number
             const cleaned = emailNormalized.replace(/[^0-9]/g, "");
@@ -847,9 +843,18 @@ app.use((req, res, next) => {
                 let foundDocId = "";
                 querySnapshot.forEach((d: any) => { foundDocId = d.id; });
                 empRef = db.collection("employees").doc(foundDocId);
+                docSnap = await empRef.get();
               }
             }
           }
+        }
+      }
+
+      if (docSnap.exists) {
+        const empData = docSnap.data();
+        if (empData && empData.role === "admin") {
+          res.status(400).json({ error: "Administrator accounts cannot be deleted." });
+          return;
         }
       }
 
@@ -1055,7 +1060,7 @@ app.use((req, res, next) => {
       let queryRef: any = db.collection("projects");
       let snapshot;
       
-      const isActuallyAdmin = role === "admin" || targetEmail === "innovalleyservices@gmail.com";
+      const isActuallyAdmin = role === "admin";
       
       if (isActuallyAdmin) {
         snapshot = await queryRef.orderBy("createdAt", "desc").get();
@@ -1086,7 +1091,7 @@ app.use((req, res, next) => {
       
       // Fetch administrative accounts to exclude from standard membership lists
       const adminSnapshot = await db.collection("employees").where("role", "==", "admin").get();
-      const adminEmails = new Set(["innovalleyservices@gmail.com"]);
+      const adminEmails = new Set<string>();
       adminSnapshot.forEach((doc: any) => {
         const data = doc.data();
         if (data && data.email) {
@@ -1126,7 +1131,7 @@ app.use((req, res, next) => {
       const { members } = req.body;
       
       const adminSnapshot = await db.collection("employees").where("role", "==", "admin").get();
-      const adminEmails = new Set(["innovalleyservices@gmail.com"]);
+      const adminEmails = new Set<string>();
       adminSnapshot.forEach((doc: any) => {
         const data = doc.data();
         if (data && data.email) {
@@ -1193,7 +1198,7 @@ app.use((req, res, next) => {
       if (description !== undefined) updateData.description = description;
       if (members !== undefined) {
         const adminSnapshot = await db.collection("employees").where("role", "==", "admin").get();
-        const adminEmails = new Set(["innovalleyservices@gmail.com"]);
+        const adminEmails = new Set<string>();
         adminSnapshot.forEach((doc: any) => {
           const data = doc.data();
           if (data && data.email) {
@@ -1278,7 +1283,7 @@ app.use((req, res, next) => {
       const targetEmail = (userEmail || userPhone || "").toString().trim().toLowerCase();
       let snapshot;
       
-      const isActuallyAdmin = role === "admin" || targetEmail === "innovalleyservices@gmail.com";
+      const isActuallyAdmin = role === "admin";
       
       if (projectId) {
         snapshot = await db.collection("tasks").where("projectId", "==", projectId).get();

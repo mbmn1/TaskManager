@@ -282,10 +282,24 @@ export const updateTaskStatus = async (
   // Trigger automated notifications in the background
   const notificationEmails = new Set<string>();
   notificationEmails.add(assignee.email);
-  notificationEmails.add("innovalleyservices@gmail.com");
+
+  try {
+    const empRes = await fetch("/api/employees");
+    if (empRes.ok) {
+      const emps: Employee[] = await empRes.json();
+      emps.forEach(emp => {
+        if (emp.role === "admin" && emp.email) {
+          notificationEmails.add(emp.email.trim().toLowerCase());
+        }
+      });
+    }
+  } catch (e) {
+    console.error("Error fetching admin emails for notifications:", e);
+  }
 
   for (const email of Array.from(notificationEmails)) {
-    const name = email === assignee.email ? assignee.name : "Innovalley Services (Admin)";
+    const isAssignee = email === assignee.email;
+    const name = isAssignee ? assignee.name : "Administrator";
     sendAutomatedNotification({
       toEmail: email,
       toName: name,

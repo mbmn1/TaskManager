@@ -85,7 +85,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Filter out the admin themselves from list of employees to assign
-  const otherEmployees = employees.filter(e => e.role !== "admin" && (e.email || "").toLowerCase().trim() !== "innovalleyservices@gmail.com");
+  const otherEmployees = employees.filter(e => e.role !== "admin");
 
   const handleDeleteEmployee = async (phone: string) => {
     const userKey = window.prompt("To confirm deletion, please enter the administrator secret key:");
@@ -478,7 +478,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {employees.map((emp) => {
-                      const isSystemAdmin = emp.email === "innovalleyservices@gmail.com";
+                      const isSystemAdmin = emp.role === "admin";
                       const initials = emp.name ? emp.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) : "U";
                       return (
                         <tr key={emp.email || emp.phone} className="hover:bg-slate-50/40 transition-colors">
