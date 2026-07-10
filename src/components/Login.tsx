@@ -178,7 +178,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     } catch (err: any) {
       console.error("Login error:", err);
       const errMsg = err?.message || String(err);
-      setError(`Login failed: ${errMsg} (If running inside the preview, please try opening the application in a new tab using the top-right button).`);
+      setError(`Login failed: ${errMsg}. Please try again.`);
       fetchCaptcha();
     } finally {
       setLoading(false);
