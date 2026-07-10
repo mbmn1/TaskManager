@@ -180,6 +180,7 @@ export default function App() {
         <div className="p-6 border-b border-slate-100">
           <div>
             <h1 className="font-extrabold text-xl tracking-tight text-slate-900 font-display">Innovalley</h1>
+            <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">workspace</p>
           </div>
         </div>
 
@@ -302,8 +303,9 @@ export default function App() {
             >
               {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
-            <div className="flex items-center">
-              <span className="font-extrabold text-base text-slate-955 tracking-tight font-display">Innovalley</span>
+            <div className="flex flex-col justify-center">
+              <span className="font-extrabold text-base text-slate-900 tracking-tight leading-none font-display">Innovalley</span>
+              <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5 leading-none">workspace</span>
             </div>
           </div>
 

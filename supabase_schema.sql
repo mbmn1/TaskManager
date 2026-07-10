@@ -1,4 +1,4 @@
--- Supabase Full Table Schema & Security Configuration for Firebase Task Manager (Innovalley Workspace)
+-- Supabase Full Table Schema & Security Configuration for Innovalley workspace
 -- Copy and paste this entire script directly into your Supabase SQL Editor (SQL editor -> New Query -> Paste -> Run)
 -- This creates all required tables, disables Row-Level Security (RLS) to allow standard operations,
 -- and creates permissive security policies as a robust backup to guarantee error-free connections.

@@ -94,9 +94,12 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 font-sans" id="login-container">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <h2 className="text-center text-3xl font-extrabold text-slate-900 tracking-tight font-display mb-2">
+        <h2 className="text-center text-3xl font-extrabold text-slate-900 tracking-tight font-display mb-1">
           Innovalley
         </h2>
+        <p className="text-center text-sm font-semibold uppercase tracking-widest text-slate-500 font-display">
+          workspace
+        </p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
