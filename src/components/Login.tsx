@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Lock, Sparkles, Shield, AlertCircle, UserCheck } from "lucide-react";
+import { Lock, AlertCircle, UserCheck } from "lucide-react";
 import { motion } from "motion/react";
 import { Employee } from "../types";
 import { seedAdminUser } from "../lib/dbService";
@@ -16,7 +16,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [captchaInput, setCaptchaInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showSetupGuide, setShowSetupGuide] = useState(false);
 
   const fetchCaptcha = async () => {
     try {
@@ -216,47 +215,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             </div>
           </form>
 
-          {/* Setup Guide */}
-          <div className="mt-6 pt-6 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setShowSetupGuide(!showSetupGuide)}
-              className="w-full text-center text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors flex items-center justify-center gap-1 cursor-pointer"
-            >
-              <Shield className="w-3.5 h-3.5" />
-              {showSetupGuide ? "Hide Supabase Integration Guide" : "Want to connect to Supabase? Open Integration Guide"}
-            </button>
-            
-            {showSetupGuide && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                className="mt-4 bg-slate-50 border border-slate-100 rounded-xl p-4 text-xs text-slate-600 space-y-3 leading-relaxed"
-              >
-                <p className="font-bold text-slate-800 text-[13px] flex items-center gap-1">
-                  <Sparkles className="w-4 h-4 text-indigo-500" />
-                  Connect Supabase Relational Database:
-                </p>
-                <p className="text-slate-600">
-                  This workspace is 100% Supabase and Vercel ready! To direct all transactions to your production Supabase database:
-                </p>
-                <ol className="list-decimal list-inside space-y-2 text-slate-600 ml-1">
-                  <li>
-                    Create a new project on <a href="https://supabase.com" target="_blank" rel="noopener noreferrer" className="text-indigo-600 font-bold underline hover:text-indigo-800">Supabase</a>.
-                  </li>
-                  <li>
-                    Configure these environment secrets in the Settings menu or your Vercel deployment:
-                    <div className="bg-slate-100 p-2 rounded border border-slate-200 mt-1 font-mono text-[10px] text-slate-700 leading-normal border-dashed">
-                      <div>VITE_SUPABASE_URL="https://your-proj.supabase.co"</div>
-                      <div>VITE_SUPABASE_ANON_KEY="your-anon-key"</div>
-                      <div>SUPABASE_URL="https://your-proj.supabase.co"</div>
-                      <div>SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"</div>
-                    </div>
-                  </li>
-                </ol>
-              </motion.div>
-            )}
-          </div>
+
         </div>
       </div>
     </div>
