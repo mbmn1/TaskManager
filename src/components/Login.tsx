@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Lock, AlertCircle, UserCheck } from "lucide-react";
 import { motion } from "motion/react";
 import { Employee } from "../types";
@@ -17,6 +17,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
   const fetchCaptcha = () => {
     try {
       const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // clear alphanumeric chars
@@ -31,6 +33,64 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       console.error("Error generating captcha locally:", err);
     }
   };
+
+  useEffect(() => {
+    if (captchaText && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Fill background with a dark slate color
+        ctx.fillStyle = "#0f172a"; // Slate 900
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw random background grid and noisy dots
+        for (let i = 0; i < 40; i++) {
+          ctx.fillStyle = `rgba(${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, 0.18)`;
+          ctx.beginPath();
+          ctx.arc(Math.random() * canvas.width, Math.random() * canvas.height, Math.random() * 2 + 1, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Draw random noise lines
+        for (let i = 0; i < 4; i++) {
+          ctx.strokeStyle = `rgba(${Math.floor(Math.random() * 100) + 150}, ${Math.floor(Math.random() * 100) + 150}, ${Math.floor(Math.random() * 100) + 150}, 0.4)`;
+          ctx.lineWidth = Math.random() * 1.5 + 1;
+          ctx.beginPath();
+          ctx.moveTo(Math.random() * canvas.width, Math.random() * canvas.height);
+          ctx.lineTo(Math.random() * canvas.width, Math.random() * canvas.height);
+          ctx.stroke();
+        }
+
+        // Draw captcha letters with individual rotation and placement distortion
+        ctx.font = "bold 20px 'JetBrains Mono', Courier, monospace";
+        ctx.textBaseline = "middle";
+
+        const letterSpacing = canvas.width / (captchaText.length + 1);
+        for (let i = 0; i < captchaText.length; i++) {
+          const char = captchaText[i];
+          const x = letterSpacing * (i + 1) - 5 + (Math.random() * 6 - 3);
+          const y = canvas.height / 2 + (Math.random() * 6 - 3);
+          
+          // Apply randomized slight rotation
+          const rotationAngle = (Math.random() * 30 - 15) * Math.PI / 180;
+
+          ctx.save();
+          ctx.translate(x, y);
+          ctx.rotate(rotationAngle);
+
+          // Alternating bright aesthetic colors
+          const colors = ["#818cf8", "#6366f1", "#4f46e5", "#38bdf8", "#34d399"];
+          ctx.fillStyle = colors[i % colors.length];
+
+          ctx.fillText(char, 0, 0);
+          ctx.restore();
+        }
+      }
+    }
+  }, [captchaText]);
 
   useEffect(() => {
     // Seed default admin first
@@ -173,19 +233,18 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               <div className="grid grid-cols-2 gap-3 items-center">
                 {/* Visual Captcha Block */}
                 <div className="relative h-12 bg-slate-900 text-slate-200 rounded-xl flex items-center justify-center border border-slate-800 select-none overflow-hidden">
-                  {/* Noise lines */}
-                  <div className="absolute inset-0 opacity-10 pointer-events-none bg-[repeating-linear-gradient(45deg,transparent,transparent_10px,var(--color-slate-200)_10px,var(--color-slate-200)_20px)]" />
-                  
-                  {/* Perfectly Centered Captcha Text */}
-                  <span className="font-mono text-xl font-extrabold tracking-widest text-indigo-400 line-through decoration-slate-600/60 decoration-2 italic select-none">
-                    {captchaText || "Loading..."}
-                  </span>
+                  <canvas 
+                    ref={canvasRef} 
+                    width={160} 
+                    height={48} 
+                    className="w-full h-full object-cover" 
+                  />
                   
                   {/* Absolute Refresh Button on Right */}
                   <button
                     type="button"
                     onClick={fetchCaptcha}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-200 hover:text-white bg-slate-900/80 p-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 transition-colors"
                     title="Regenerate Captcha"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin-slow">

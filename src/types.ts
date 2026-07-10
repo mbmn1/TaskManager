@@ -33,6 +33,7 @@ export interface Task {
   assignedBy: string; // creator phone number
   status: 'assigned' | 'rejected' | 'in progress' | 'completed';
   attachment?: TaskAttachment | null;
+  completionAttachment?: TaskAttachment | null;
   rejectionNotes?: string;
   notDoneNotes?: string;
   completedRemarks?: string;

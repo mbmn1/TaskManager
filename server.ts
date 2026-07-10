@@ -576,22 +576,17 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
         console.log("Admin user seeded successfully in Supabase/Fallback.");
       }
 
-      const userEmail = "mbmnmurali@gmail.com";
-      const userRef = db.collection("employees").doc(userEmail);
-      const userSnap = await userRef.get();
-
-      if (!userSnap.exists) {
-        const defaultUser = {
-          id: userEmail,
-          name: "Murali Krishna",
-          email: "mbmnmurali@gmail.com",
-          phone: "9848884897",
-          designation: "Lead Developer (Admin)",
-          role: "admin",
-          password: "Mbmn@B!#!951"
-        };
-        await userRef.set(defaultUser);
-        console.log("Murali Krishna Admin user seeded successfully in Supabase/Fallback.");
+      // Ensure any previously incorrectly seeded mbmnmurali@gmail.com is removed or converted
+      try {
+        const userEmail = "mbmnmurali@gmail.com";
+        const userRef = db.collection("employees").doc(userEmail);
+        const userSnap = await userRef.get();
+        if (userSnap.exists) {
+          await db.collection("employees").doc(userEmail).delete();
+          console.log("Removed incorrect admin mbmnmurali@gmail.com");
+        }
+      } catch (e) {
+        console.error("Error cleaning up incorrect admin:", e);
       }
 
       res.json({ success: true, seeded: true });
@@ -711,7 +706,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
     try {
       const { email } = req.params;
       const emailNormalized = email.trim().toLowerCase();
-      if (emailNormalized === "innovalleyservices@gmail.com" || emailNormalized === "mbmnmurali@gmail.com") {
+      if (emailNormalized === "innovalleyservices@gmail.com") {
         res.status(400).json({ error: "The system administrator accounts cannot be deleted." });
         return;
       }
@@ -1277,7 +1272,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
   app.put("/api/tasks/:id/status", async (req, res) => {
     try {
       const { id } = req.params;
-      const { newStatus, task, project, updater, assignee, rejectionNotes, notDoneNotes, completedRemarks } = req.body;
+      const { newStatus, task, project, updater, assignee, rejectionNotes, notDoneNotes, completedRemarks, attachment, completionAttachment } = req.body;
       
       const updateData: any = {
         status: newStatus,
@@ -1287,6 +1282,8 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
       if (rejectionNotes !== undefined) updateData.rejectionNotes = rejectionNotes;
       if (notDoneNotes !== undefined) updateData.notDoneNotes = notDoneNotes;
       if (completedRemarks !== undefined) updateData.completedRemarks = completedRemarks;
+      if (attachment !== undefined) updateData.attachment = attachment;
+      if (completionAttachment !== undefined) updateData.completionAttachment = completionAttachment;
 
       await db.collection("tasks").doc(id).update(updateData);
 

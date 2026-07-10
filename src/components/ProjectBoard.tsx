@@ -49,6 +49,19 @@ export const robustFindEmployee = (employees: Employee[], identifier: string) =>
   return found;
 };
 
+export const downloadAttachment = (attachment: TaskAttachment) => {
+  try {
+    const link = document.createElement('a');
+    link.href = attachment.data;
+    link.download = attachment.name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } catch (err) {
+    console.error("Failed to download attachment:", err);
+  }
+};
+
 export default function ProjectBoard({ currentUser, employees, projects }: ProjectBoardProps) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -59,7 +72,7 @@ export default function ProjectBoard({ currentUser, employees, projects }: Proje
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDesc, setTaskDesc] = useState("");
-  const [taskAssignee, setTaskAssignee] = useState("");
+  const [taskAssignees, setTaskAssignees] = useState<string[]>([]);
   const [taskAttachment, setTaskAttachment] = useState<TaskAttachment | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
@@ -153,34 +166,38 @@ export default function ProjectBoard({ currentUser, employees, projects }: Proje
     setTaskError(null);
     setTaskLoading(true);
 
-    if (!taskTitle.trim() || !taskAssignee) {
-      setTaskError("Please provide a task title and select an assignee.");
+    if (!taskTitle.trim() || taskAssignees.length === 0) {
+      setTaskError("Please provide a task title and select at least one assignee.");
       setTaskLoading(false);
       return;
     }
 
-    const assigneeEmployee = robustFindEmployee(employees, taskAssignee);
-    if (!assigneeEmployee || !selectedProject) {
+    if (!selectedProject) {
       setTaskError("Invalid assignment parameters.");
       setTaskLoading(false);
       return;
     }
 
     try {
-      await createTask({
-        projectId: selectedProject.id,
-        title: taskTitle.trim(),
-        description: taskDesc.trim(),
-        assignedTo: taskAssignee,
-        assignedBy: currentUser.email || "",
-        status: 'assigned',
-        attachment: taskAttachment
-      }, selectedProject, currentUser, assigneeEmployee);
+      for (const phone of taskAssignees) {
+        const assigneeEmployee = robustFindEmployee(employees, phone);
+        if (!assigneeEmployee) continue;
+
+        await createTask({
+          projectId: selectedProject.id,
+          title: taskTitle.trim(),
+          description: taskDesc.trim(),
+          assignedTo: phone,
+          assignedBy: currentUser.email || "",
+          status: 'assigned',
+          attachment: taskAttachment
+        }, selectedProject, currentUser, assigneeEmployee);
+      }
 
       // Reset
       setTaskTitle("");
       setTaskDesc("");
-      setTaskAssignee("");
+      setTaskAssignees([]);
       setTaskAttachment(null);
       setTaskSuccess(true);
       setShowTaskModal(false);
@@ -197,7 +214,7 @@ export default function ProjectBoard({ currentUser, employees, projects }: Proje
   const handleStatusChange = async (
     task: Task, 
     newStatus: 'assigned' | 'rejected' | 'in progress' | 'completed',
-    extra?: { rejectionNotes?: string; notDoneNotes?: string; completedRemarks?: string }
+    extra?: { rejectionNotes?: string; notDoneNotes?: string; completedRemarks?: string; completionAttachment?: TaskAttachment | null }
   ) => {
     if (!selectedProject) return;
     const assigneeEmployee = robustFindEmployee(employees, task.assignedTo);
@@ -535,20 +552,36 @@ export default function ProjectBoard({ currentUser, employees, projects }: Proje
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Assigned Team Member</label>
-                    <select
-                      required
-                      value={taskAssignee}
-                      onChange={(e) => setTaskAssignee(e.target.value)}
-                      className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 text-sm font-semibold text-slate-700 bg-slate-50"
-                    >
-                      <option value="">-- Choose Member --</option>
-                      {projectMembers.map(emp => (
-                        <option key={emp.phone} value={emp.phone}>
-                          {emp.name} ({emp.designation})
-                        </option>
-                      ))}
-                    </select>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Assigned Team Members (Check all that apply)</label>
+                    <div className="max-h-36 overflow-y-auto border border-slate-200 rounded-xl p-2.5 space-y-1.5 bg-slate-50">
+                      {projectMembers.length === 0 ? (
+                        <p className="text-xs text-slate-400 p-1">No team members admitted to this workspace yet.</p>
+                      ) : (
+                        projectMembers.map(emp => {
+                          const isChecked = taskAssignees.includes(emp.phone);
+                          return (
+                            <label key={emp.phone} className="flex items-center gap-2 px-2 py-1.5 hover:bg-white rounded-lg cursor-pointer transition-colors border border-transparent hover:border-slate-100">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {
+                                  if (isChecked) {
+                                    setTaskAssignees(taskAssignees.filter(phone => phone !== emp.phone));
+                                  } else {
+                                    setTaskAssignees([...taskAssignees, emp.phone]);
+                                  }
+                                }}
+                                className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                              />
+                              <div className="text-xs">
+                                <span className="font-bold text-slate-800">{emp.name}</span>
+                                <span className="text-slate-400 ml-1.5">({emp.designation})</span>
+                              </div>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
 
                   <div>
@@ -645,7 +678,7 @@ interface TaskCardProps {
   onStatusChange: (
     task: Task, 
     newStatus: Task['status'], 
-    extra?: { rejectionNotes?: string; notDoneNotes?: string; completedRemarks?: string }
+    extra?: { rejectionNotes?: string; notDoneNotes?: string; completedRemarks?: string; completionAttachment?: TaskAttachment | null }
   ) => void;
   formatFileSize: (bytes: number) => string;
   currentUser: Employee;
@@ -659,25 +692,48 @@ function TaskCard({ task, project, employees, onStatusChange, formatFileSize, cu
   const [rejectionNotesInput, setRejectionNotesInput] = useState("");
   const [showCompletionForm, setShowCompletionForm] = useState(false);
   const [completedRemarksInput, setCompletedRemarksInput] = useState("");
+  const [completionAttachment, setCompletionAttachment] = useState<TaskAttachment | null>(null);
+  const [isDoneDragOver, setIsDoneDragOver] = useState(false);
   const [showNotDoneForm, setShowNotDoneForm] = useState(false);
   const [notDoneNotesInput, setNotDoneNotesInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [showImagePopup, setShowImagePopup] = useState(false);
+  const [showCompletionImagePopup, setShowCompletionImagePopup] = useState(false);
 
-  // Download logic for Base64 attachments
-  const handleDownloadAttachment = (attachment: TaskAttachment) => {
-    try {
-      const link = document.createElement('a');
-      link.href = attachment.data;
-      link.download = attachment.name;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      console.error("Failed to download attachment:", err);
+  const handleDoneFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processDoneFile(file);
     }
   };
+
+  const processDoneFile = (file: File) => {
+    setErrorMsg("");
+    if (file.size > 50 * 1024 * 1024) {
+      setErrorMsg("Proof file size is too large (Max limit is 50MB).");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setCompletionAttachment({
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          data: event.target.result as string
+        });
+      }
+    };
+    reader.onerror = () => {
+      setErrorMsg("Failed to read the file. Please try again.");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Download logic for Base64 attachments
+  const handleDownloadAttachment = downloadAttachment;
 
   const isCompleted = task.status === 'completed';
   const isAssignee = task.assignedTo === currentUser.phone;
@@ -717,7 +773,10 @@ function TaskCard({ task, project, employees, onStatusChange, formatFileSize, cu
     setSubmitting(true);
     setErrorMsg("");
     try {
-      await onStatusChange(task, 'completed', { completedRemarks: completedRemarksInput.trim() || undefined });
+      await onStatusChange(task, 'completed', { 
+        completedRemarks: completedRemarksInput.trim() || undefined,
+        completionAttachment: completionAttachment
+      });
       setShowCompletionForm(false);
     } catch (err: any) {
       setErrorMsg("Failed to complete task.");
@@ -908,6 +967,105 @@ function TaskCard({ task, project, employees, onStatusChange, formatFileSize, cu
         );
       })()}
 
+      {/* Proof of Completion Attachment inside card */}
+      {task.completionAttachment && (() => {
+        const isImage = task.completionAttachment.type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(task.completionAttachment.name || '');
+        return (
+          <div className="mt-1">
+            <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-wider block mb-1">Completion Proof:</span>
+            <div 
+              onClick={() => {
+                if (isImage) {
+                  setShowCompletionImagePopup(true);
+                } else {
+                  handleDownloadAttachment(task.completionAttachment!);
+                }
+              }}
+              className="flex items-center justify-between bg-emerald-50/40 hover:bg-emerald-50 border border-emerald-200 hover:border-emerald-300 p-2 rounded-lg transition-all cursor-pointer text-left shrink-0 animate-fade-in"
+              title={isImage ? "Click to view image in pop-up" : "Click to download proof"}
+            >
+              <div className="flex items-center gap-2 overflow-hidden mr-1">
+                {isImage ? (
+                  <div className="w-6 h-6 rounded bg-emerald-100/50 flex items-center justify-center text-emerald-600 shrink-0 overflow-hidden border border-emerald-200">
+                    <img src={task.completionAttachment.data} alt="completion proof" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  </div>
+                ) : (
+                  <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+                )}
+                <div className="overflow-hidden">
+                  <p className="text-[10px] font-semibold text-emerald-800 truncate">{task.completionAttachment.name}</p>
+                  <p className="text-[8px] text-emerald-500 font-mono">{formatFileSize(task.completionAttachment.size)}</p>
+                </div>
+              </div>
+              {isImage ? (
+                <span className="text-[8px] font-bold text-emerald-700 bg-emerald-100/50 px-1.5 py-0.5 rounded uppercase tracking-wide">View</span>
+              ) : (
+                <Download className="w-3.5 h-3.5 text-emerald-500 hover:text-emerald-700 transition-colors shrink-0" />
+              )}
+            </div>
+
+            {/* Image pop-up (lightbox modal) */}
+            <AnimatePresence>
+              {showCompletionImagePopup && (
+                <div 
+                  className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm"
+                  onClick={() => setShowCompletionImagePopup(false)}
+                >
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="relative z-10 bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border border-slate-100 flex flex-col"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-800 truncate max-w-md">{task.completionAttachment.name}</h4>
+                        <p className="text-[9px] text-slate-400 font-mono">{formatFileSize(task.completionAttachment.size)}</p>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => setShowCompletionImagePopup(false)}
+                        className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    
+                    <div className="p-6 bg-slate-100 flex items-center justify-center max-h-[60vh] overflow-auto">
+                      <img 
+                        src={task.completionAttachment.data} 
+                        alt={task.completionAttachment.name} 
+                        className="max-h-[50vh] max-w-full object-contain rounded-lg shadow-sm"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+
+                    <div className="p-4 border-t border-slate-100 bg-white flex justify-end gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setShowCompletionImagePopup(false)}
+                        className="px-4 py-1.5 border border-slate-200 text-slate-500 hover:bg-slate-50 rounded-xl text-xs font-semibold transition-all"
+                      >
+                        Close
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadAttachment(task.completionAttachment!)}
+                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 shadow-sm"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Download Proof
+                      </button>
+                    </div>
+                  </motion.div>
+                </div>
+              )}
+            </AnimatePresence>
+          </div>
+        );
+      })()}
+
       {/* Interactive Action Forms */}
       {showRejectionForm && (
         <form onSubmit={handleRejectSubmit} className="mt-2 p-3 bg-red-50 border border-red-100 rounded-lg space-y-2">
@@ -951,12 +1109,56 @@ function TaskCard({ task, project, employees, onStatusChange, formatFileSize, cu
             placeholder="e.g. Completed layout, uploaded assets..."
             className="w-full p-2 border border-emerald-200 rounded bg-white text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium"
           />
+
+          {/* Optional Completion Proof Attachment */}
+          <div>
+            <label className="block text-[10px] font-bold text-emerald-700 uppercase tracking-wider mb-1">Add Proof of Completion (Optional)</label>
+            <div
+              onDragOver={(e) => { e.preventDefault(); setIsDoneDragOver(true); }}
+              onDragLeave={() => setIsDoneDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDoneDragOver(false);
+                const file = e.dataTransfer.files?.[0];
+                if (file) processDoneFile(file);
+              }}
+              onClick={() => document.getElementById(`completion-attachment-picker-${task.id}`)?.click()}
+              className={`border border-dashed rounded p-2 text-center cursor-pointer transition-all ${
+                isDoneDragOver ? 'border-emerald-500 bg-emerald-100/30' : 'border-emerald-200 hover:border-emerald-400 bg-white'
+              }`}
+            >
+              <input
+                type="file"
+                id={`completion-attachment-picker-${task.id}`}
+                className="hidden"
+                onChange={handleDoneFileChange}
+              />
+              {completionAttachment ? (
+                <div className="flex items-center justify-between text-left text-[11px] text-emerald-900 bg-emerald-100/30 p-1 rounded">
+                  <span className="truncate font-semibold max-w-[200px]">{completionAttachment.name}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCompletionAttachment(null);
+                    }}
+                    className="text-[10px] font-bold text-red-500 hover:text-red-700 ml-2"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <p className="text-[10px] text-slate-400">Click or drag completion proof file here</p>
+              )}
+            </div>
+          </div>
+
           {errorMsg && <p className="text-[10px] text-red-600 font-bold">{errorMsg}</p>}
           <div className="flex justify-end gap-1.5">
             <button
               type="button"
               disabled={submitting}
-              onClick={() => { setShowCompletionForm(false); setErrorMsg(""); }}
+              onClick={() => { setShowCompletionForm(false); setErrorMsg(""); setCompletionAttachment(null); }}
               className="px-2.5 py-1 text-[10px] font-bold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded transition-colors uppercase tracking-wider"
             >
               Cancel
@@ -1150,6 +1352,34 @@ function SentTasksTrackerPanel({ userTasks, currentUser, employees, selectedProj
                       <div className="mt-3 p-2.5 bg-emerald-50 border border-emerald-100 rounded-lg text-xs text-emerald-700">
                         <span className="font-bold block text-[9px] uppercase tracking-wider text-emerald-500 mb-0.5">Completion Notes:</span>
                         <p className="font-medium">{t.completedRemarks}</p>
+                      </div>
+                    )}
+
+                    {/* Attachments inside tracker view */}
+                    {(t.attachment || t.completionAttachment) && (
+                      <div className="mt-3 flex flex-wrap gap-2 pt-2 border-t border-slate-100/60">
+                        {t.attachment && (
+                          <button
+                            type="button"
+                            onClick={() => downloadAttachment(t.attachment!)}
+                            className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-semibold text-slate-700 transition-all cursor-pointer"
+                            title="Download context file"
+                          >
+                            <Paperclip className="w-3 h-3 text-slate-400" />
+                            Context File
+                          </button>
+                        )}
+                        {t.completionAttachment && (
+                          <button
+                            type="button"
+                            onClick={() => downloadAttachment(t.completionAttachment!)}
+                            className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-[10px] font-bold text-emerald-800 transition-all cursor-pointer"
+                            title="Download completion proof file"
+                          >
+                            <CheckCircle className="w-3 h-3 text-emerald-500" />
+                            Completion Proof
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

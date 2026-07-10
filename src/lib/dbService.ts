@@ -1,4 +1,4 @@
-import { Employee, Project, Task, EmailNotification, AuditLog } from "../types";
+import { Employee, Project, Task, EmailNotification, AuditLog, TaskAttachment } from "../types";
 
 // Seed Admin user
 export const seedAdminUser = async () => {
@@ -250,6 +250,7 @@ export const updateTaskStatus = async (
     rejectionNotes?: string;
     notDoneNotes?: string;
     completedRemarks?: string;
+    completionAttachment?: TaskAttachment | null;
   }
 ) => {
   const res = await fetch(`/api/tasks/${task.id}/status`, {
@@ -263,7 +264,8 @@ export const updateTaskStatus = async (
       assignee,
       rejectionNotes: extra?.rejectionNotes,
       notDoneNotes: extra?.notDoneNotes,
-      completedRemarks: extra?.completedRemarks
+      completedRemarks: extra?.completedRemarks,
+      completionAttachment: extra?.completionAttachment
     })
   });
 
