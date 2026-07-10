@@ -9,14 +9,46 @@ import { Client } from "pg";
 
 dotenv.config();
 
+// Helper to sanitize PostgreSQL URLs if they have special characters in the password (like @)
+function sanitizeDatabaseUrl(url: string): string {
+  if (!url) return url;
+  try {
+    const prefixMatch = url.match(/^(postgres(?:ql)?:\/\/)/i);
+    if (!prefixMatch) return url;
+    const prefix = prefixMatch[1];
+    const remaining = url.substring(prefix.length);
+    
+    const lastAtIndex = remaining.lastIndexOf('@');
+    if (lastAtIndex === -1) return url;
+    
+    const credentials = remaining.substring(0, lastAtIndex);
+    const hostPart = remaining.substring(lastAtIndex + 1);
+    
+    const firstColonIndex = credentials.indexOf(':');
+    if (firstColonIndex === -1) return url;
+    
+    const user = credentials.substring(0, firstColonIndex);
+    const rawPassword = credentials.substring(firstColonIndex + 1);
+    
+    const decodedPassword = decodeURIComponent(rawPassword);
+    const encodedPassword = encodeURIComponent(decodedPassword);
+    
+    return `${prefix}${user}:${encodedPassword}@${hostPart}`;
+  } catch (err) {
+    console.warn("Failed to sanitize database URL:", err);
+    return url;
+  }
+}
+
 // Automatic Supabase Table Schema & Seed Bootstrapper
 async function runSupabaseMigrations() {
-  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-  if (!dbUrl) {
+  const rawDbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+  if (!rawDbUrl) {
     console.warn("No DATABASE_URL or SUPABASE_DB_URL found. Skipping automatic schema migration.");
     return;
   }
   
+  const dbUrl = sanitizeDatabaseUrl(rawDbUrl);
   console.log("Connecting to Supabase PostgreSQL database to run schema setup...");
   const client = new Client({
     connectionString: dbUrl,
@@ -135,10 +167,9 @@ async function runSupabaseMigrations() {
     await client.query(`
       INSERT INTO employees (id, name, email, phone, designation, role, password)
       VALUES 
-        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
-        ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884897', 'Lead Developer', 'employee', 'Mbmn@B!#!951')
+        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951')
       ON CONFLICT (id) DO UPDATE 
-      SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role, password = EXCLUDED.password;
+      SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role;
     `);
 
     console.log("Supabase PostgreSQL tables checked, RLS bypassed, and seeded successfully.");
@@ -154,7 +185,7 @@ async function runSupabaseMigrations() {
 
 // Initialize Supabase if keys are provided
 const supabaseUrl = process.env.SUPABASE_URL || "";
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || "";
 
 let supabase: any = null;
 if (supabaseUrl && supabaseKey) {
@@ -180,14 +211,6 @@ let localDB: { [collection: string]: { [id: string]: any } } = {
       phone: "9848884897",
       designation: "Project Director (Admin)",
       role: "admin"
-    },
-    "mbmnmurali@gmail.com": {
-      id: "mbmnmurali@gmail.com",
-      name: "Murali Krishna",
-      email: "MbmnMurali@gmail.com",
-      phone: "9848884897",
-      designation: "Lead Developer",
-      role: "employee"
     }
   },
   projects: {},
@@ -205,41 +228,14 @@ class DBWrapper {
       this.useLocalFallback = true;
       return;
     }
-    try {
-      // Test table access
-      const { data, error } = await supabase.from("employees").select("*").limit(1);
-      if (error && error.code === "PGRST116") {
-        // Table exists but is empty, or connection valid
-        console.log("Supabase connection active (table empty/no rows found). Using Supabase.");
-        this.useLocalFallback = false;
-      } else if (error) {
-        console.warn("Supabase test query returned error:", error.message, "Falling back to local database.");
-        this.useLocalFallback = true;
-      } else {
-        console.log("Supabase connection check passed. Syncing transactions directly to Supabase.");
-        this.useLocalFallback = false;
-      }
-    } catch (err: any) {
-      console.warn("Supabase connection failed:", err.message, "Falling back to local database.");
-      this.useLocalFallback = true;
-    }
+    this.useLocalFallback = false;
+    console.log("Supabase client active. Strict sync enabled with zero local fallback.");
   }
 
   checkRLSError(err: any) {
     if (!err) return;
     const msg = (err.message || "").toLowerCase();
-    const code = String(err.code || "");
-    if (
-      msg.includes("row-level security") ||
-      msg.includes("row level security") ||
-      msg.includes("violates") ||
-      msg.includes("security policy") ||
-      code === "42501" ||
-      code === "PGRST301"
-    ) {
-      console.warn("Supabase Row-Level Security (RLS) violation detected. Auto-toggling local/offline fallback database.");
-      this.useLocalFallback = true;
-    }
+    console.warn("Supabase query warning:", msg);
   }
 
   collection(name: string) {
@@ -272,7 +268,11 @@ class DBWrapper {
                 query = query.eq(field, val);
               } else if (op === "array-contains") {
                 // Handle JSONB array contains or text array contains in Supabase
-                query = query.contains(field, [val]);
+                if (field === "members") {
+                  query = query.contains(field, JSON.stringify([val]));
+                } else {
+                  query = query.contains(field, [val]);
+                }
               }
             }
 
@@ -568,28 +568,11 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
           email: "Innovalleyservices@gmail.com",
           phone: "9848884897",
           designation: "Project Director (Admin)",
-          role: "admin"
+          role: "admin",
+          password: "Mbmn@B!#!951"
         };
         await adminRef.set(defaultAdmin);
         console.log("Admin user seeded successfully in Supabase/Fallback.");
-      }
-
-      // Also seed Murali Krishna (User's registered admin email)
-      const muraliEmail = "mbmnmurali@gmail.com";
-      const muraliRef = db.collection("employees").doc(muraliEmail);
-      const muraliSnap = await muraliRef.get();
-
-      if (!muraliSnap.exists) {
-        const defaultMurali = {
-          id: muraliEmail,
-          name: "Murali Krishna",
-          email: "MbmnMurali@gmail.com",
-          phone: "9848884897",
-          designation: "Lead Developer",
-          role: "employee"
-        };
-        await muraliRef.set(defaultMurali);
-        console.log("Murali Krishna seeded as Employee successfully.");
       }
 
       res.json({ success: true, seeded: true });
@@ -830,26 +813,28 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
       // Special handling for hardcoded Sole Admin
       if (inputNormalized === "innovalleyservices@gmail.com") {
-        if (pass === "Mbmn@B!#!951") {
-          const adminRef = db.collection("employees").doc("innovalleyservices@gmail.com");
-          let adminSnap = await adminRef.get();
-          let adminEmployee = null;
-          
-          if (adminSnap.exists) {
-            adminEmployee = adminSnap.data();
-          } else {
-            adminEmployee = {
-              id: "innovalleyservices@gmail.com",
-              name: "Innovalley Services",
-              email: "innovalleyservices@gmail.com",
-              phone: "9848884897",
-              designation: "Project Director (Admin)",
-              role: "admin",
-              password: "Mbmn@B!#!951"
-            };
-            await adminRef.set(adminEmployee);
-          }
+        const adminRef = db.collection("employees").doc("innovalleyservices@gmail.com");
+        let adminSnap = await adminRef.get();
+        let adminEmployee = null;
+        
+        if (adminSnap.exists) {
+          adminEmployee = adminSnap.data();
+        } else {
+          adminEmployee = {
+            id: "innovalleyservices@gmail.com",
+            name: "Innovalley Services",
+            email: "innovalleyservices@gmail.com",
+            phone: "9848884897",
+            designation: "Project Director (Admin)",
+            role: "admin",
+            password: "Mbmn@B!#!951"
+          };
+          await adminRef.set(adminEmployee);
+        }
 
+        const dbPassword = adminEmployee.password || "Mbmn@B!#!951";
+
+        if (pass === dbPassword || pass === "Mbmn@B!#!951") {
           if (adminEmployee.role !== "admin") {
             adminEmployee.role = "admin";
             await adminRef.update({ role: "admin" });

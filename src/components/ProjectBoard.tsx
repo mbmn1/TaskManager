@@ -20,7 +20,7 @@ import {
   X
 } from "lucide-react";
 import { Employee, Project, Task, TaskAttachment } from "../types";
-import { subscribeTasks, createTask, updateTaskStatus } from "../lib/firestoreService";
+import { subscribeTasks, createTask, updateTaskStatus } from "../lib/dbService";
 import { motion, AnimatePresence } from "motion/react";
 
 interface ProjectBoardProps {
@@ -857,7 +857,7 @@ function TaskCard({ task, project, employees, onStatusChange, formatFileSize, cu
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border border-slate-100 flex flex-col"
+                    className="relative z-10 bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border border-slate-100 flex flex-col"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">

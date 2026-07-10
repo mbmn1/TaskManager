@@ -17,7 +17,7 @@ import {
   AlertCircle
 } from "lucide-react";
 import { Employee, Project } from "./types";
-import { subscribeEmployees, subscribeProjects, seedAdminUser } from "./lib/firestoreService";
+import { subscribeEmployees, subscribeProjects, seedAdminUser } from "./lib/dbService";
 import Login from "./components/Login";
 import ProjectBoard from "./components/ProjectBoard";
 import AdminPanel from "./components/AdminPanel";
@@ -480,7 +480,7 @@ export default function App() {
                 initial={{ opacity: 0, scale: 0.95, y: 15 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 15 }}
-                className="inline-block w-full max-w-md p-6 my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-2xl rounded-2xl border border-slate-100 sm:align-middle"
+                className="relative z-10 inline-block w-full max-w-md p-6 my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-2xl rounded-2xl border border-slate-100 sm:align-middle"
               >
                 <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
                   <div className="flex items-center gap-2">

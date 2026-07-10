@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Users, CheckCircle2, Clock, AlertCircle, BarChart3, TrendingUp, Sparkles } from "lucide-react";
 import { Employee, Project, Task } from "../types";
-import { subscribeAllTasks } from "../lib/firestoreService";
+import { subscribeAllTasks } from "../lib/dbService";
 
 interface ProgressTrackerProps {
   currentUser: Employee;

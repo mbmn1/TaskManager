@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Lock, Sparkles, Shield, AlertCircle, UserCheck } from "lucide-react";
 import { motion } from "motion/react";
 import { Employee } from "../types";
-import { seedAdminUser } from "../lib/firestoreService";
+import { seedAdminUser } from "../lib/dbService";
 
 interface LoginProps {
   onLoginSuccess: (user: Employee) => void;
@@ -103,9 +103,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         <h2 className="text-center text-2xl font-extrabold text-slate-900 tracking-tight font-display">
           Innovalley Workspace Portal
         </h2>
-        <p className="mt-1 text-center text-xs font-semibold text-slate-400 uppercase tracking-widest">
-          Secure Password Access
-        </p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
@@ -125,7 +122,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           <form onSubmit={handleLogin} className="space-y-5">
             <div>
               <label htmlFor="identifier" className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
-                Mobile Number or Email Address
+                Mobile Number (Enter without +91) or Email Address
               </label>
               <div className="relative rounded-lg shadow-sm">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -135,7 +132,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                   type="text"
                   id="identifier"
                   required
-                  placeholder="e.g. 7095472772 or email"
+                  placeholder="e.g. 9848884897 (without +91) or email"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-900 placeholder-slate-400 font-medium transition-all text-sm"
@@ -161,9 +158,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                   className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-900 placeholder-slate-400 font-medium transition-all text-sm"
                 />
               </div>
-              <div className="text-[10px] text-slate-400 mt-1">
-                Admin master password or employee password (default: <code className="font-bold text-slate-500">123456</code>)
-              </div>
             </div>
 
             {/* Captcha verification section */}
@@ -171,18 +165,22 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
                 Captcha Verification
               </label>
-              <div className="flex gap-2 items-center">
+              <div className="grid grid-cols-2 gap-3 items-center">
                 {/* Visual Captcha Block */}
-                <div className="flex-1 bg-slate-900 text-slate-200 py-2 px-4 rounded-xl flex items-center justify-between border border-slate-800 select-none overflow-hidden relative" style={{ height: "46px" }}>
+                <div className="relative h-12 bg-slate-900 text-slate-200 rounded-xl flex items-center justify-center border border-slate-800 select-none overflow-hidden">
                   {/* Noise lines */}
                   <div className="absolute inset-0 opacity-10 pointer-events-none bg-[repeating-linear-gradient(45deg,transparent,transparent_10px,var(--color-slate-200)_10px,var(--color-slate-200)_20px)]" />
+                  
+                  {/* Perfectly Centered Captcha Text */}
                   <span className="font-mono text-xl font-extrabold tracking-widest text-indigo-400 line-through decoration-slate-600/60 decoration-2 italic select-none">
                     {captchaText || "Loading..."}
                   </span>
+                  
+                  {/* Absolute Refresh Button on Right */}
                   <button
                     type="button"
                     onClick={fetchCaptcha}
-                    className="text-slate-400 hover:text-white p-1 rounded transition-colors"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
                     title="Regenerate Captcha"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin-slow">
@@ -201,7 +199,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                   placeholder="Enter captcha"
                   value={captchaInput}
                   onChange={(e) => setCaptchaInput(e.target.value.replace(/[^A-Za-z0-9]/g, ""))}
-                  className="w-32 px-3 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-900 placeholder-slate-400 font-bold font-mono tracking-wider text-center text-sm uppercase"
+                  className="h-12 w-full px-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-900 placeholder-slate-400 font-bold font-mono tracking-wider text-center text-sm uppercase transition-all"
                 />
               </div>
             </div>

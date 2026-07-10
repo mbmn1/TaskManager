@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Users, FolderKanban, ShieldCheck, UserCheck, AlertCircle, Sparkles, Trash2, Mail, Phone, Pencil, X, Check, Building2, History, Search } from "lucide-react";
 import { Employee, Project, AuditLog } from "../types";
-import { addEmployee, createProject, deleteEmployee, deleteProject, updateEmployee, updateProject, subscribeAuditLogs } from "../lib/firestoreService";
+import { addEmployee, createProject, deleteEmployee, deleteProject, updateEmployee, updateProject, subscribeAuditLogs } from "../lib/dbService";
 import { motion, AnimatePresence } from "motion/react";
 
 interface AdminPanelProps {
@@ -412,7 +412,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Murali Krishna"
+                    placeholder="e.g. John Doe"
                     value={empName}
                     onChange={(e) => setEmpName(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium placeholder-slate-400 text-slate-800"
@@ -458,7 +458,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">Login Password</label>
                   <input
                     type="text"
-                    placeholder="Enter password (default: 123456)"
+                    placeholder="Enter password"
                     value={empPassword}
                     onChange={(e) => setEmpPassword(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-semibold placeholder-slate-400 text-slate-800"
@@ -861,7 +861,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                 initial={{ opacity: 0, scale: 0.95, y: 15 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 15 }}
-                className="inline-block w-full max-w-md p-6 my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-2xl rounded-2xl border border-slate-100 sm:align-middle"
+                className="relative z-10 inline-block w-full max-w-md p-6 my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-2xl rounded-2xl border border-slate-100 sm:align-middle"
               >
                 <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
                   <div className="flex items-center gap-2">
@@ -991,7 +991,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                 initial={{ opacity: 0, scale: 0.95, y: 15 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 15 }}
-                className="inline-block w-full max-w-md p-6 my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-2xl rounded-2xl border border-slate-100 sm:align-middle"
+                className="relative z-10 inline-block w-full max-w-md p-6 my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-2xl rounded-2xl border border-slate-100 sm:align-middle"
               >
                 <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
                   <div className="flex items-center gap-2">
