@@ -188,7 +188,7 @@ export default function ProjectBoard({ currentUser, employees, projects }: Proje
           title: taskTitle.trim(),
           description: taskDesc.trim(),
           assignedTo: phone,
-          assignedBy: currentUser.email || "",
+          assignedBy: currentUser.phone,
           status: 'assigned',
           attachment: taskAttachment
         }, selectedProject, currentUser, assigneeEmployee);

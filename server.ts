@@ -106,9 +106,15 @@ async function runSupabaseMigrations() {
         "rejectionNotes" TEXT,
         "notDoneNotes" TEXT,
         "completedRemarks" TEXT,
+        "completionAttachment" JSONB,
         "createdAt" BIGINT,
         "updatedAt" BIGINT
       );
+    `);
+
+    // Ensure completionAttachment column exists if the table was created previously without it
+    await client.query(`
+      ALTER TABLE tasks ADD COLUMN IF NOT EXISTS "completionAttachment" JSONB;
     `);
 
     // 4. Create notifications table
@@ -168,9 +174,10 @@ async function runSupabaseMigrations() {
     await client.query(`
       INSERT INTO employees (id, name, email, phone, designation, role, password)
       VALUES 
-        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951')
+        ('9848884897', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
+        ('9848884899', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884899', 'Lead Developer', 'employee', 'Mbmn@B!#!951')
       ON CONFLICT (id) DO UPDATE 
-      SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role;
+      SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role, password = EXCLUDED.password;
     `);
 
     console.log("Supabase PostgreSQL tables checked, RLS bypassed, and seeded successfully.");
@@ -568,16 +575,18 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
   // Seed Admin user if not exists
   app.post("/api/employees/seed", async (req, res) => {
     try {
-      const adminEmail = "innovalleyservices@gmail.com";
-      const adminRef = db.collection("employees").doc(adminEmail);
+      const adminPhone = "9848884897";
+      const devPhone = "9848884899";
+      
+      const adminRef = db.collection("employees").doc(adminPhone);
       const adminSnap = await adminRef.get();
 
       if (!adminSnap.exists) {
         const defaultAdmin = {
-          id: adminEmail,
+          id: adminPhone,
           name: "Innovalley Services",
           email: "innovalleyservices@gmail.com",
-          phone: "9848884897",
+          phone: adminPhone,
           designation: "Project Director (Admin)",
           role: "admin",
           password: "Mbmn@B!#!951"
@@ -586,17 +595,29 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
         console.log("Admin user seeded successfully in Supabase/Fallback.");
       }
 
-      // Ensure any previously incorrectly seeded mbmnmurali@gmail.com is removed or converted
+      const devRef = db.collection("employees").doc(devPhone);
+      const devSnap = await devRef.get();
+      if (!devSnap.exists) {
+        const defaultDev = {
+          id: devPhone,
+          name: "Murali Krishna",
+          email: "mbmnmurali@gmail.com",
+          phone: devPhone,
+          designation: "Lead Developer",
+          role: "employee",
+          password: "Mbmn@B!#!951"
+        };
+        await devRef.set(defaultDev);
+        console.log("Dev user seeded successfully in Supabase/Fallback.");
+      }
+
+      // Cleanup old email-based documents to keep database clean
       try {
-        const userEmail = "mbmnmurali@gmail.com";
-        const userRef = db.collection("employees").doc(userEmail);
-        const userSnap = await userRef.get();
-        if (userSnap.exists) {
-          await db.collection("employees").doc(userEmail).delete();
-          console.log("Removed incorrect admin mbmnmurali@gmail.com");
-        }
+        await db.collection("employees").doc("innovalleyservices@gmail.com").delete();
+        await db.collection("employees").doc("mbmnmurali@gmail.com").delete();
+        console.log("Cleaned up old email-based document accounts");
       } catch (e) {
-        console.error("Error cleaning up incorrect admin:", e);
+        console.error("Cleanup warning:", e);
       }
 
       res.json({ success: true, seeded: true });
@@ -630,13 +651,23 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
   app.post("/api/employees", async (req, res) => {
     try {
       const employee = req.body;
+      const phoneNormalized = employee.phone ? employee.phone.replace(/[^0-9]/g, "") : "";
+      if (!phoneNormalized || phoneNormalized.length < 10) {
+        return res.status(400).json({ error: "A valid 10-digit mobile number is required as the primary ID." });
+      }
+      
+      const empRef = db.collection("employees").doc(phoneNormalized);
+      const existing = await empRef.get();
+      if (existing.exists) {
+        return res.status(400).json({ error: "An employee with this mobile number already exists." });
+      }
+
       const emailNormalized = employee.email.trim().toLowerCase();
-      const empRef = db.collection("employees").doc(emailNormalized);
       const newEmp = {
         ...employee,
-        id: emailNormalized,
-        email: employee.email.trim(),
-        phone: employee.phone ? employee.phone.trim() : "",
+        id: phoneNormalized,
+        email: emailNormalized,
+        phone: phoneNormalized,
         password: employee.password ? employee.password.trim() : "123456",
         role: 'employee'
       };

@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   "rejectionNotes" TEXT,
   "notDoneNotes" TEXT,
   "completedRemarks" TEXT,
+  "completionAttachment" JSONB,
   "createdAt" BIGINT,
   "updatedAt" BIGINT
 );
@@ -111,7 +112,7 @@ CREATE POLICY "Allow public access" ON logs FOR ALL TO public USING (true) WITH 
 -- ====================================================================================
 INSERT INTO employees (id, name, email, phone, designation, role, password)
 VALUES 
-  ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
-  ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884897', 'Lead Developer', 'employee', 'Mbmn@B!#!951')
+  ('9848884897', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
+  ('9848884899', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884899', 'Lead Developer', 'employee', 'Mbmn@B!#!951')
 ON CONFLICT (id) DO UPDATE 
-SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role;
+SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role, password = EXCLUDED.password;

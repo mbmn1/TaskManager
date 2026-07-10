@@ -87,7 +87,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   // Filter out the admin themselves from list of employees to assign
   const otherEmployees = employees.filter(e => e.role !== "admin" && (e.email || "").toLowerCase().trim() !== "innovalleyservices@gmail.com");
 
-  const handleDeleteEmployee = async (email: string) => {
+  const handleDeleteEmployee = async (phone: string) => {
     const userKey = window.prompt("To confirm deletion, please enter the administrator secret key:");
     if (userKey !== "Mbmn@B!#!951") {
       alert("Invalid secret key. Deletion aborted.");
@@ -96,7 +96,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
     if (window.confirm("Are you sure you want to remove this employee? They will lose workspace access.")) {
       try {
         setDeleteError(null);
-        const res = await deleteEmployee(email);
+        const res = await deleteEmployee(phone);
         if (res.error) {
           setDeleteError(res.error);
         }
@@ -152,6 +152,19 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
     setEmpSuccess(false);
     setEmpLoading(true);
 
+    const normalizedPhone = empPhone ? empPhone.replace(/[^0-9]/g, "") : "";
+    if (!normalizedPhone || normalizedPhone.length < 10) {
+      setEmpError("Please enter a valid 10-digit mobile number.");
+      setEmpLoading(false);
+      return;
+    }
+
+    if (employees.some(emp => emp.phone && emp.phone.trim().replace(/[^0-9]/g, "") === normalizedPhone)) {
+      setEmpError("An employee with this mobile number already exists.");
+      setEmpLoading(false);
+      return;
+    }
+
     const emailNormalized = empEmail.trim().toLowerCase();
     if (!emailNormalized || !emailNormalized.includes("@")) {
       setEmpError("Please enter a valid Gmail address.");
@@ -164,8 +177,6 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
       setEmpLoading(false);
       return;
     }
-
-    const normalizedPhone = empPhone ? empPhone.replace(/[^0-9]/g, "") : "";
 
     try {
       await addEmployee({
@@ -229,8 +240,9 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
     setEditEmpError(null);
 
     try {
-      const res = await updateEmployee(editingEmployee.email || editingEmployee.phone, {
+      const res = await updateEmployee(editingEmployee.phone, {
         name: editEmpName,
+        email: editEmpEmail.trim().toLowerCase(),
         designation: editEmpDesignation,
         role: editEmpRole,
         password: editEmpPassword
@@ -348,7 +360,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-800 text-sm font-display">Add New Employee</h3>
-                  <p className="text-[10px] text-slate-400">Register employee details for Gmail login</p>
+                  <p className="text-[10px] text-slate-400">Register employee details for Mobile/Password login</p>
                 </div>
               </div>
 
@@ -362,7 +374,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                 {empSuccess && (
                   <div className="bg-emerald-50 text-emerald-800 p-3 rounded-xl flex items-center gap-2 text-xs border border-emerald-200">
                     <UserCheck className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
-                    <span>Employee registered successfully! They can now log in via Password.</span>
+                    <span>Employee added successfully! They can now log in via Password.</span>
                   </div>
                 )}
 
@@ -379,6 +391,18 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                 </div>
 
                 <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Mobile Number (Required for Login)</label>
+                  <input
+                    type="tel"
+                    required
+                    placeholder="e.g. 9848884000"
+                    value={empPhone}
+                    onChange={(e) => setEmpPhone(e.target.value.replace(/[^0-9]/g, ""))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-semibold placeholder-slate-400 font-mono text-slate-800"
+                  />
+                </div>
+
+                <div>
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">Email Address</label>
                   <input
                     type="email"
@@ -387,17 +411,6 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                     value={empEmail}
                     onChange={(e) => setEmpEmail(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium placeholder-slate-400 text-slate-800"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Mobile Number (Optional)</label>
-                  <input
-                    type="tel"
-                    placeholder="e.g. 9848884000"
-                    value={empPhone}
-                    onChange={(e) => setEmpPhone(e.target.value.replace(/[^0-9]/g, ""))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-semibold placeholder-slate-400 font-mono text-slate-800"
                   />
                 </div>
 
@@ -430,7 +443,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                   className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs transition-colors shadow-sm disabled:opacity-50 flex items-center justify-center gap-1.5"
                 >
                   <Plus className="w-4 h-4" />
-                  {empLoading ? "Registering..." : "Add & Register Employee"}
+                  {empLoading ? "Adding..." : "Add Employee"}
                 </button>
               </form>
             </div>
@@ -527,7 +540,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                                   <Pencil className="w-3.5 h-3.5" />
                                 </button>
                                 <button
-                                  onClick={() => handleDeleteEmployee(emp.email)}
+                                  onClick={() => handleDeleteEmployee(emp.phone)}
                                   className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                                   title="Revoke access"
                                 >
@@ -864,11 +877,11 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                   )}
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Employee Email ID (Non-editable)</label>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Mobile Number (Non-editable / Primary ID)</label>
                     <input
                       type="text"
                       disabled
-                      value={editingEmployee.email || editingEmployee.phone}
+                      value={editingEmployee.phone}
                       className="w-full px-3 py-2 border border-slate-200 bg-slate-50 text-slate-400 rounded-lg text-xs font-mono font-bold cursor-not-allowed"
                     />
                   </div>

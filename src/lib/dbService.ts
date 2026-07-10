@@ -109,8 +109,8 @@ export const deleteCompletedTasks = async (projectId: string) => {
 };
 
 // Update employee details (Admin action)
-export const updateEmployee = async (email: string, employee: Partial<Omit<Employee, 'id' | 'email'>>) => {
-  const res = await fetch(`/api/employees/${encodeURIComponent(email)}`, {
+export const updateEmployee = async (phone: string, employee: Partial<Omit<Employee, 'id' | 'phone'>>) => {
+  const res = await fetch(`/api/employees/${encodeURIComponent(phone)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(employee)
