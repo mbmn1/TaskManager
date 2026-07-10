@@ -774,7 +774,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
     try {
       const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // clear alphanumeric chars
       let captchaText = "";
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 4; i++) {
         captchaText += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       

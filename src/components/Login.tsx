@@ -19,11 +19,28 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const fetchCaptcha = () => {
+  const fetchCaptcha = async () => {
+    try {
+      const res = await fetch("/api/auth/captcha");
+      if (res.ok) {
+        const data = await res.json();
+        setCaptchaId(data.captchaId);
+        setCaptchaText(data.captchaText);
+        setCaptchaInput("");
+      } else {
+        generateLocalCaptcha();
+      }
+    } catch (err) {
+      console.error("Error fetching captcha from server, falling back to local:", err);
+      generateLocalCaptcha();
+    }
+  };
+
+  const generateLocalCaptcha = () => {
     try {
       const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // clear alphanumeric chars
       let captchaTextStr = "";
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 4; i++) {
         captchaTextStr += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       setCaptchaId("local_captcha");
@@ -68,11 +85,13 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         ctx.font = "bold 20px 'JetBrains Mono', Courier, monospace";
         ctx.textBaseline = "middle";
 
-        const letterSpacing = canvas.width / (captchaText.length + 1);
+        // Reserve 36px on the right for the absolute refresh button to prevent overlap
+        const usableWidth = canvas.width - 36;
+        const letterSpacing = usableWidth / (captchaText.length + 1);
         for (let i = 0; i < captchaText.length; i++) {
           const char = captchaText[i];
-          const x = letterSpacing * (i + 1) - 5 + (Math.random() * 6 - 3);
-          const y = canvas.height / 2 + (Math.random() * 6 - 3);
+          const x = letterSpacing * (i + 1) + (Math.random() * 4 - 2);
+          const y = canvas.height / 2 + (Math.random() * 4 - 2);
           
           // Apply randomized slight rotation
           const rotationAngle = (Math.random() * 30 - 15) * Math.PI / 180;
@@ -237,7 +256,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     ref={canvasRef} 
                     width={160} 
                     height={48} 
-                    className="w-full h-full object-cover" 
+                    className="w-full h-full object-contain px-4" 
                   />
                   
                   {/* Absolute Refresh Button on Right */}
@@ -259,7 +278,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                 <input
                   type="text"
                   required
-                  maxLength={6}
+                  maxLength={4}
                   placeholder="Enter captcha"
                   value={captchaInput}
                   onChange={(e) => setCaptchaInput(e.target.value.replace(/[^A-Za-z0-9]/g, ""))}
