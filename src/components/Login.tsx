@@ -142,7 +142,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       return;
     }
 
-    if (capVal !== captchaText) {
+    if (capVal.toUpperCase() !== (captchaText || "").toUpperCase()) {
       setError("Incorrect captcha code. Please try again.");
       setLoading(false);
       fetchCaptcha();

@@ -208,10 +208,20 @@ let localDB: { [collection: string]: { [id: string]: any } } = {
     "innovalleyservices@gmail.com": {
       id: "innovalleyservices@gmail.com",
       name: "Innovalley Services",
-      email: "Innovalleyservices@gmail.com",
+      email: "innovalleyservices@gmail.com",
       phone: "9848884897",
       designation: "Project Director (Admin)",
-      role: "admin"
+      role: "admin",
+      password: "Mbmn@B!#!951"
+    },
+    "mbmnmurali@gmail.com": {
+      id: "mbmnmurali@gmail.com",
+      name: "Murali Krishna",
+      email: "mbmnmurali@gmail.com",
+      phone: "9848884897",
+      designation: "Lead Developer",
+      role: "employee",
+      password: "Mbmn@B!#!951"
     }
   },
   projects: {},
