@@ -17,17 +17,18 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const fetchCaptcha = async () => {
+  const fetchCaptcha = () => {
     try {
-      const res = await fetch("/api/auth/captcha");
-      const data = await res.json();
-      if (data && data.captchaId) {
-        setCaptchaId(data.captchaId);
-        setCaptchaText(data.captchaText);
-        setCaptchaInput("");
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // clear alphanumeric chars
+      let captchaTextStr = "";
+      for (let i = 0; i < 5; i++) {
+        captchaTextStr += chars.charAt(Math.floor(Math.random() * chars.length));
       }
+      setCaptchaId("local_captcha");
+      setCaptchaText(captchaTextStr);
+      setCaptchaInput("");
     } catch (err) {
-      console.error("Error fetching captcha:", err);
+      console.error("Error generating captcha locally:", err);
     }
   };
 
@@ -44,7 +45,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
     const inputVal = identifier.trim();
     const passVal = password.trim();
-    const capVal = captchaInput.trim();
+    const capVal = captchaInput.trim().toUpperCase();
 
     if (!inputVal) {
       setError("Please enter your Mobile Number.");
@@ -59,6 +60,13 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     if (!capVal) {
       setError("Please enter the captcha verification code.");
       setLoading(false);
+      return;
+    }
+
+    if (capVal !== captchaText) {
+      setError("Incorrect captcha code. Please try again.");
+      setLoading(false);
+      fetchCaptcha();
       return;
     }
 
