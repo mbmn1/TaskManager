@@ -161,7 +161,13 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         })
       });
 
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        throw new Error(`Server returned non-JSON response (${res.status} ${res.statusText || "Error"}).`);
+      }
+
       if (res.ok && data.success && data.employee) {
         onLoginSuccess(data.employee);
       } else {
@@ -169,9 +175,10 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         // Always refresh captcha on failed login attempt
         fetchCaptcha();
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Login error:", err);
-      setError("Server is starting or offline. Please try again.");
+      const errMsg = err?.message || String(err);
+      setError(`Login failed: ${errMsg} (If running inside the preview, please try opening the application in a new tab using the top-right button).`);
       fetchCaptcha();
     } finally {
       setLoading(false);
