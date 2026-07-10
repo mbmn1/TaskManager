@@ -172,16 +172,17 @@ async function runSupabaseMigrations() {
       }
     }
 
-    // Seed admin accounts
-    // Clean up old phone-number based IDs and unwanted employee accounts first to keep table strictly clean
+    // Seed admin and developer accounts
+    // Clean up old phone-number based IDs to keep table strictly clean
     await client.query(`
-      DELETE FROM employees WHERE id IN ('9848884897', '9848884899', 'mbmnmurali@gmail.com');
+      DELETE FROM employees WHERE id IN ('9848884897', '9848884899');
     `);
 
     await client.query(`
       INSERT INTO employees (id, name, email, phone, designation, role, password)
       VALUES 
-        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951')
+        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
+        ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884899', 'Lead Developer', 'employee', 'Mbmn@B!#!951')
       ON CONFLICT (id) DO NOTHING;
     `);
 
@@ -243,15 +244,44 @@ class DBWrapper {
       const { error: delErr } = await supabase
         .from("employees")
         .delete()
-        .in("id", ["9848884897", "9848884899", "mbmnmurali@gmail.com"]);
+        .in("id", ["9848884897", "9848884899"]);
         
       if (delErr) {
         console.warn("Supabase REST cleanup warning:", delErr.message);
       } else {
         console.log("Successfully cleaned up old/unwanted employee accounts in Supabase via REST API.");
       }
+
+      // Ensure both default admin and developer accounts are seeded in Supabase via REST API
+      const defaultAdmin = {
+        id: "innovalleyservices@gmail.com",
+        name: "Innovalley Services",
+        email: "innovalleyservices@gmail.com",
+        phone: "9848884897",
+        designation: "Project Director (Admin)",
+        role: "admin",
+        password: "Mbmn@B!#!951"
+      };
+
+      const defaultDev = {
+        id: "mbmnmurali@gmail.com",
+        name: "Murali Krishna",
+        email: "mbmnmurali@gmail.com",
+        phone: "9848884899",
+        designation: "Lead Developer",
+        role: "employee",
+        password: "Mbmn@B!#!951"
+      };
+
+      const { error: adminErr } = await supabase.from("employees").upsert(defaultAdmin);
+      if (adminErr) console.warn("Supabase REST admin seeding warning:", adminErr.message);
+
+      const { error: devErr } = await supabase.from("employees").upsert(defaultDev);
+      if (devErr) console.warn("Supabase REST developer seeding warning:", devErr.message);
+
+      console.log("Successfully validated/seeded Admin and Developer accounts via REST API.");
     } catch (err: any) {
-      console.error("Error performing Supabase REST cleanup:", err.message);
+      console.error("Error performing Supabase REST cleanup/seeding:", err.message);
     }
   }
 
@@ -609,7 +639,7 @@ app.use((req, res, next) => {
     res.json({ status: "ok", timestamp: Date.now() });
   });
 
-  // Seed Admin user if not exists
+  // Seed Admin and Developer users if they do not exist
   app.post("/api/employees/seed", async (req, res) => {
     try {
       const adminId = "innovalleyservices@gmail.com";
@@ -632,11 +662,21 @@ app.use((req, res, next) => {
         console.log("Admin user seeded successfully in Supabase/Fallback.");
       }
 
-      // Explicitly delete any old employee account if present
-      try {
-        await db.collection("employees").doc(devId).delete();
-      } catch (e) {
-        console.warn("Could not delete dev account:", e);
+      const devRef = db.collection("employees").doc(devId);
+      const devSnap = await devRef.get();
+
+      if (!devSnap.exists) {
+        const defaultDev = {
+          id: devId,
+          name: "Murali Krishna",
+          email: "mbmnmurali@gmail.com",
+          phone: "9848884899",
+          designation: "Lead Developer",
+          role: "employee",
+          password: "Mbmn@B!#!951"
+        };
+        await devRef.set(defaultDev);
+        console.log("Developer user seeded successfully in Supabase/Fallback.");
       }
 
       // Cleanup old phone-based documents to keep database clean
