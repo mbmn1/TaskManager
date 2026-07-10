@@ -36,7 +36,7 @@ export default function App() {
   const handleLoginSuccess = (user: Employee) => {
     setCurrentUser(user);
     const emailNorm = (user.email || "").toLowerCase().trim();
-    if (user.role === 'admin' || emailNorm === 'mbmnmurali@gmail.com' || emailNorm === 'innovalleyservices@gmail.com') {
+    if (user.role === 'admin' || emailNorm === 'innovalleyservices@gmail.com') {
       setActiveTab('progress');
     } else {
       setActiveTab('board');
@@ -169,7 +169,7 @@ export default function App() {
   }
 
   const currentUserEmailNorm = (currentUser.email || "").toLowerCase().trim();
-  const isUserAdmin = currentUser.role === 'admin' || currentUserEmailNorm === 'mbmnmurali@gmail.com' || currentUserEmailNorm === 'innovalleyservices@gmail.com';
+  const isUserAdmin = currentUser.role === 'admin' || currentUserEmailNorm === 'innovalleyservices@gmail.com';
 
   const userInitials = currentUser.name ? currentUser.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2) : "U";
 

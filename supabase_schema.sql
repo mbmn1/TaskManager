@@ -1,5 +1,20 @@
--- Supabase Schema for Firebase Task Manager (Innovalley Workspace)
--- Copy and paste this script directly into your Supabase SQL Editor to create all the required tables.
+-- Supabase Full Table Schema & Security Configuration for Firebase Task Manager (Innovalley Workspace)
+-- Copy and paste this entire script directly into your Supabase SQL Editor (SQL editor -> New Query -> Paste -> Run)
+-- This creates all required tables, disables Row-Level Security (RLS) to allow standard operations,
+-- and creates permissive security policies as a robust backup to guarantee error-free connections.
+
+-- ====================================================================================
+-- 1. CLEANUP / RESET (Optional: Uncomment the lines below if you want to reset everything)
+-- ====================================================================================
+-- DROP TABLE IF EXISTS logs CASCADE;
+-- DROP TABLE IF EXISTS notifications CASCADE;
+-- DROP TABLE IF EXISTS tasks CASCADE;
+-- DROP TABLE IF EXISTS projects CASCADE;
+-- DROP TABLE IF EXISTS employees CASCADE;
+
+-- ====================================================================================
+-- 2. CREATE TABLES
+-- ====================================================================================
 
 -- 1. Create employees table
 CREATE TABLE IF NOT EXISTS employees (
@@ -12,10 +27,6 @@ CREATE TABLE IF NOT EXISTS employees (
   password TEXT DEFAULT '123456'
 );
 
--- Enable row-level security (RLS) but default to allow all reads/writes if desired,
--- or disable RLS for convenience since the backend server acts as a proxy.
-ALTER TABLE employees DISABLE ROW LEVEL SECURITY;
-
 -- 2. Create projects table
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
@@ -25,8 +36,6 @@ CREATE TABLE IF NOT EXISTS projects (
   members JSONB DEFAULT '[]'::jsonb, -- List of employee emails
   "createdAt" BIGINT
 );
-
-ALTER TABLE projects DISABLE ROW LEVEL SECURITY;
 
 -- 3. Create tasks table
 CREATE TABLE IF NOT EXISTS tasks (
@@ -45,8 +54,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   "updatedAt" BIGINT
 );
 
-ALTER TABLE tasks DISABLE ROW LEVEL SECURITY;
-
 -- 4. Create notifications table
 CREATE TABLE IF NOT EXISTS notifications (
   id TEXT PRIMARY KEY,
@@ -60,8 +67,6 @@ CREATE TABLE IF NOT EXISTS notifications (
   "projectName" TEXT
 );
 
-ALTER TABLE notifications DISABLE ROW LEVEL SECURITY;
-
 -- 5. Create logs table
 CREATE TABLE IF NOT EXISTS logs (
   id TEXT PRIMARY KEY,
@@ -74,12 +79,39 @@ CREATE TABLE IF NOT EXISTS logs (
   timestamp BIGINT
 );
 
+-- ====================================================================================
+-- 3. ROW LEVEL SECURITY (RLS) BYPASS & PUBLIC ACCESS POLICIES
+-- ====================================================================================
+
+-- Explicitly disable Row-Level Security (RLS) for convenience as our backend behaves as a secure proxy
+ALTER TABLE employees DISABLE ROW LEVEL SECURITY;
+ALTER TABLE projects DISABLE ROW LEVEL SECURITY;
+ALTER TABLE tasks DISABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications DISABLE ROW LEVEL SECURITY;
 ALTER TABLE logs DISABLE ROW LEVEL SECURITY;
 
--- Seed default admin profiles (if you want to pre-populate)
+-- Just in case RLS gets automatically enabled, define permissive policies to prevent policy violation errors
+DROP POLICY IF EXISTS "Allow public access" ON employees;
+CREATE POLICY "Allow public access" ON employees FOR ALL TO public USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public access" ON projects;
+CREATE POLICY "Allow public access" ON projects FOR ALL TO public USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public access" ON tasks;
+CREATE POLICY "Allow public access" ON tasks FOR ALL TO public USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public access" ON notifications;
+CREATE POLICY "Allow public access" ON notifications FOR ALL TO public USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public access" ON logs;
+CREATE POLICY "Allow public access" ON logs FOR ALL TO public USING (true) WITH CHECK (true);
+
+-- ====================================================================================
+-- 4. SEED REQUIRED ADMIN ACCOUNTS
+-- ====================================================================================
 INSERT INTO employees (id, name, email, phone, designation, role, password)
 VALUES 
   ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
-  ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884897', 'Admin (Owner)', 'employee', 'Mbmn@B!#!951')
+  ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884897', 'Lead Developer', 'employee', 'Mbmn@B!#!951')
 ON CONFLICT (id) DO UPDATE 
 SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role, password = EXCLUDED.password;

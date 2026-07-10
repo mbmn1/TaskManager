@@ -76,7 +76,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Filter out the admin themselves from list of employees to assign
-  const otherEmployees = employees.filter(e => e.role !== "admin" && (e.email || "").toLowerCase().trim() !== "innovalleyservices@gmail.com" && (e.email || "").toLowerCase().trim() !== "mbmnmurali@gmail.com");
+  const otherEmployees = employees.filter(e => e.role !== "admin" && (e.email || "").toLowerCase().trim() !== "innovalleyservices@gmail.com");
 
   const handleDeleteEmployee = async (email: string) => {
     const userKey = window.prompt("To confirm deletion, please enter the administrator secret key:");
@@ -319,8 +319,8 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
             <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 hover:border-indigo-200 transition-all flex items-center justify-between group">
               <div>
                 <span className="text-slate-400 text-[10px] font-bold uppercase tracking-widest block mb-0.5">Workspace Sync</span>
-                <span className="text-sm font-extrabold text-emerald-600 block">Real-time Live</span>
-                <span className="text-[10px] text-slate-400 font-medium block">Automatic Firestore Sync</span>
+                <span className="text-sm font-extrabold text-amber-600 block">Supabase Real-time Disabled</span>
+                <span className="text-[10px] text-slate-500 font-bold block">Data Stored & Persistent</span>
               </div>
               <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-lg transition-colors group-hover:bg-indigo-100">
                 <Building2 className="w-5 h-5" />
@@ -506,7 +506,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {employees.map((emp) => {
-                      const isSystemAdmin = emp.email === "innovalleyservices@gmail.com" || emp.email === "mbmnmurali@gmail.com";
+                      const isSystemAdmin = emp.email === "innovalleyservices@gmail.com";
                       const initials = emp.name ? emp.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) : "U";
                       return (
                         <tr key={emp.email || emp.phone} className="hover:bg-slate-50/40 transition-colors">

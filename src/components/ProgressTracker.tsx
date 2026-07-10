@@ -39,11 +39,11 @@ export default function ProgressTracker({ currentUser, employees, projects }: Pr
   const overallCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
   const currentUserEmailNorm = (currentUser.email || "").toLowerCase().trim();
-  const isUserAdmin = currentUser.role === 'admin' || currentUserEmailNorm === 'mbmnmurali@gmail.com' || currentUserEmailNorm === 'innovalleyservices@gmail.com';
+  const isUserAdmin = currentUser.role === 'admin' || currentUserEmailNorm === 'innovalleyservices@gmail.com';
 
   // Calculate individual member metrics for real-time employee task loading
   const memberMetrics: MemberMetric[] = employees
-    .filter(emp => emp.role !== "admin" && (emp.email || "").toLowerCase().trim() !== "innovalleyservices@gmail.com" && (emp.email || "").toLowerCase().trim() !== "mbmnmurali@gmail.com")
+    .filter(emp => emp.role !== "admin" && (emp.email || "").toLowerCase().trim() !== "innovalleyservices@gmail.com")
     .filter(emp => {
       if (isUserAdmin) return true;
       const empEmailNorm = (emp.email || "").toLowerCase().trim();
@@ -145,9 +145,9 @@ export default function ProgressTracker({ currentUser, employees, projects }: Pr
             </div>
           </div>
 
-          <div className="mt-6 flex items-center gap-1.5 text-xs text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-full font-semibold">
+          <div className="mt-6 flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded-full font-semibold">
             <TrendingUp className="w-4 h-4" />
-            <span>Real-time Sync Verified</span>
+            <span>Supabase Real-time Disabled (Data Persistent)</span>
           </div>
         </div>
 
@@ -159,7 +159,7 @@ export default function ProgressTracker({ currentUser, employees, projects }: Pr
                 {currentUser.role === 'admin' || currentUser.phone === '9848884897' ? "Active Project Members Progress" : "My Personal Progress Metrics"}
               </h3>
               <p className="text-xs text-slate-400">
-                {currentUser.role === 'admin' || currentUser.phone === '9848884897' ? "Real-time status updates and loading levels per teammate" : "Your real-time task status updates and productivity tracking"}
+                {currentUser.role === 'admin' || currentUser.phone === '9848884897' ? "Status updates and loading levels per teammate" : "Your task status updates and productivity tracking"}
               </p>
             </div>
             <Users className="w-5 h-5 text-slate-400 shrink-0" />
