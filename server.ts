@@ -182,8 +182,7 @@ async function runSupabaseMigrations() {
       INSERT INTO employees (id, name, email, phone, designation, role, password)
       VALUES 
         ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951')
-      ON CONFLICT (id) DO UPDATE 
-      SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role, password = EXCLUDED.password;
+      ON CONFLICT (id) DO NOTHING;
     `);
 
     console.log("Supabase PostgreSQL tables checked, RLS bypassed, and seeded successfully.");
@@ -219,17 +218,7 @@ if (supabaseUrl && supabaseKey) {
 
 // Local DB in-memory cache (no file persistence)
 let localDB: { [collection: string]: { [id: string]: any } } = {
-  employees: {
-    "innovalleyservices@gmail.com": {
-      id: "innovalleyservices@gmail.com",
-      name: "Innovalley Services",
-      email: "innovalleyservices@gmail.com",
-      phone: "9848884897",
-      designation: "Project Director (Admin)",
-      role: "admin",
-      password: "Mbmn@B!#!951"
-    }
-  },
+  employees: {},
   projects: {},
   tasks: {},
   notifications: {},
@@ -261,29 +250,8 @@ class DBWrapper {
       } else {
         console.log("Successfully cleaned up old/unwanted employee accounts in Supabase via REST API.");
       }
-
-      const adminId = "innovalleyservices@gmail.com";
-      const defaultAdmin = {
-        id: adminId,
-        name: "Innovalley Services",
-        email: adminId,
-        phone: "9848884897",
-        designation: "Project Director (Admin)",
-        role: "admin",
-        password: "Mbmn@B!#!951"
-      };
-
-      const { error: seedErr } = await supabase
-        .from("employees")
-        .upsert(defaultAdmin);
-
-      if (seedErr) {
-        console.warn("Supabase REST admin seeding warning:", seedErr.message);
-      } else {
-        console.log("Successfully seeded/updated Admin user in Supabase via REST API.");
-      }
     } catch (err: any) {
-      console.error("Error performing Supabase REST initialization/cleanup:", err.message);
+      console.error("Error performing Supabase REST cleanup:", err.message);
     }
   }
 
@@ -957,44 +925,6 @@ app.use((req, res, next) => {
 
       const inputNormalized = input.toLowerCase();
 
-      // Special handling for hardcoded Sole Admin
-      if (inputNormalized === "innovalleyservices@gmail.com") {
-        const adminRef = db.collection("employees").doc("innovalleyservices@gmail.com");
-        let adminSnap = await adminRef.get();
-        let adminEmployee = null;
-        
-        if (adminSnap.exists) {
-          adminEmployee = adminSnap.data();
-        } else {
-          adminEmployee = {
-            id: "innovalleyservices@gmail.com",
-            name: "Innovalley Services",
-            email: "innovalleyservices@gmail.com",
-            phone: "9848884897",
-            designation: "Project Director (Admin)",
-            role: "admin",
-            password: "Mbmn@B!#!951"
-          };
-          await adminRef.set(adminEmployee);
-        }
-
-        const dbPassword = adminEmployee.password || "Mbmn@B!#!951";
-
-        if (pass === dbPassword || pass === "Mbmn@B!#!951") {
-          if (adminEmployee.role !== "admin") {
-            adminEmployee.role = "admin";
-            await adminRef.update({ role: "admin" });
-          }
-
-          return res.json({
-            success: true,
-            employee: adminEmployee
-          });
-        } else {
-          return res.status(400).json({ error: "Incorrect administrator password." });
-        }
-      }
-
       // Search for employee by email or phone
       let matchedEmployee: any = null;
       
@@ -1062,13 +992,7 @@ app.use((req, res, next) => {
       const employeeData = docSnap.data();
       const dbPassword = employeeData.password || "123456"; // Default password fallback
       
-      // If it's the admin, verify master password
-      const isAdmin = emailNormalized === "innovalleyservices@gmail.com";
-      const masterPassword = "Mbmn@B!#!951";
-      
-      const isCurrentCorrect = isAdmin 
-        ? (currentPassword === masterPassword || currentPassword === dbPassword)
-        : (currentPassword === dbPassword);
+      const isCurrentCorrect = currentPassword === dbPassword;
         
       if (!isCurrentCorrect) {
         return res.status(400).json({ error: "Incorrect current password." });
