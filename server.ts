@@ -171,11 +171,16 @@ async function runSupabaseMigrations() {
     }
 
     // Seed admin accounts
+    // Clean up old phone-number based IDs first to keep table strictly clean
+    await client.query(`
+      DELETE FROM employees WHERE id IN ('9848884897', '9848884899');
+    `);
+
     await client.query(`
       INSERT INTO employees (id, name, email, phone, designation, role, password)
       VALUES 
-        ('9848884897', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
-        ('9848884899', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884899', 'Lead Developer', 'employee', 'Mbmn@B!#!951')
+        ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', 'Mbmn@B!#!951'),
+        ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884897', 'Lead Developer', 'employee', 'Mbmn@B!#!951')
       ON CONFLICT (id) DO UPDATE 
       SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, designation = EXCLUDED.designation, role = EXCLUDED.role, password = EXCLUDED.password;
     `);
@@ -603,18 +608,18 @@ app.use((req, res, next) => {
   // Seed Admin user if not exists
   app.post("/api/employees/seed", async (req, res) => {
     try {
-      const adminPhone = "9848884897";
-      const devPhone = "9848884899";
+      const adminId = "innovalleyservices@gmail.com";
+      const devId = "mbmnmurali@gmail.com";
       
-      const adminRef = db.collection("employees").doc(adminPhone);
+      const adminRef = db.collection("employees").doc(adminId);
       const adminSnap = await adminRef.get();
 
       if (!adminSnap.exists) {
         const defaultAdmin = {
-          id: adminPhone,
+          id: adminId,
           name: "Innovalley Services",
           email: "innovalleyservices@gmail.com",
-          phone: adminPhone,
+          phone: "9848884897",
           designation: "Project Director (Admin)",
           role: "admin",
           password: "Mbmn@B!#!951"
@@ -623,14 +628,14 @@ app.use((req, res, next) => {
         console.log("Admin user seeded successfully in Supabase/Fallback.");
       }
 
-      const devRef = db.collection("employees").doc(devPhone);
+      const devRef = db.collection("employees").doc(devId);
       const devSnap = await devRef.get();
       if (!devSnap.exists) {
         const defaultDev = {
-          id: devPhone,
+          id: devId,
           name: "Murali Krishna",
           email: "mbmnmurali@gmail.com",
-          phone: devPhone,
+          phone: "9848884897",
           designation: "Lead Developer",
           role: "employee",
           password: "Mbmn@B!#!951"
@@ -639,11 +644,11 @@ app.use((req, res, next) => {
         console.log("Dev user seeded successfully in Supabase/Fallback.");
       }
 
-      // Cleanup old email-based documents to keep database clean
+      // Cleanup old phone-based documents to keep database clean
       try {
-        await db.collection("employees").doc("innovalleyservices@gmail.com").delete();
-        await db.collection("employees").doc("mbmnmurali@gmail.com").delete();
-        console.log("Cleaned up old email-based document accounts");
+        await db.collection("employees").doc("9848884897").delete();
+        await db.collection("employees").doc("9848884899").delete();
+        console.log("Cleaned up old phone-number based document accounts");
       } catch (e) {
         console.error("Cleanup warning:", e);
       }
