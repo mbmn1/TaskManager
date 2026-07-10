@@ -48,7 +48,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     const capVal = captchaInput.trim();
 
     if (!inputVal) {
-      setError("Please enter your Mobile Number or Email.");
+      setError("Please enter your Mobile Number.");
       setLoading(false);
       return;
     }
@@ -101,7 +101,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           </div>
         </div>
         <h2 className="text-center text-2xl font-extrabold text-slate-900 tracking-tight font-display">
-          Innovalley Workspace Portal
+          Innovalley Workspace
         </h2>
       </div>
 
@@ -122,7 +122,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           <form onSubmit={handleLogin} className="space-y-5">
             <div>
               <label htmlFor="identifier" className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
-                Mobile Number (Enter without +91) or Email Address
+                MOBILE NUMBER
               </label>
               <div className="relative rounded-lg shadow-sm">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -132,7 +132,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                   type="text"
                   id="identifier"
                   required
-                  placeholder="e.g. 9848884897 (without +91) or email"
+                  placeholder="e.g. 9848884897 (without +91)"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-900 placeholder-slate-400 font-medium transition-all text-sm"

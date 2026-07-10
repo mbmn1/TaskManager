@@ -144,11 +144,6 @@ export default function ProgressTracker({ currentUser, employees, projects }: Pr
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Done</span>
             </div>
           </div>
-
-          <div className="mt-6 flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded-full font-semibold">
-            <TrendingUp className="w-4 h-4" />
-            <span>Supabase Real-time Disabled (Data Persistent)</span>
-          </div>
         </div>
 
         {/* Real-time active project member loading list */}
