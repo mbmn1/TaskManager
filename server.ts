@@ -747,7 +747,9 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
     try {
       const { email } = req.params;
       const emailNormalized = email.trim().toLowerCase();
-      if (emailNormalized === "innovalleyservices@gmail.com") {
+      
+      // Block deleting admin by email or phone
+      if (emailNormalized === "innovalleyservices@gmail.com" || emailNormalized === "9848884897") {
         res.status(400).json({ error: "The system administrator accounts cannot be deleted." });
         return;
       }
@@ -755,11 +757,31 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
       let empRef = db.collection("employees").doc(emailNormalized);
       let docSnap = await empRef.get();
       if (!docSnap.exists) {
-        const querySnapshot = await db.collection("employees").where("email", "==", emailNormalized).get();
+        // 1. Try query by email field
+        let querySnapshot = await db.collection("employees").where("email", "==", emailNormalized).get();
         if (!querySnapshot.empty) {
           let foundDocId = "";
           querySnapshot.forEach((d: any) => { foundDocId = d.id; });
           empRef = db.collection("employees").doc(foundDocId);
+        } else {
+          // 2. Try query by phone field
+          querySnapshot = await db.collection("employees").where("phone", "==", emailNormalized).get();
+          if (!querySnapshot.empty) {
+            let foundDocId = "";
+            querySnapshot.forEach((d: any) => { foundDocId = d.id; });
+            empRef = db.collection("employees").doc(foundDocId);
+          } else {
+            // 3. Try query by cleaned phone number
+            const cleaned = emailNormalized.replace(/[^0-9]/g, "");
+            if (cleaned) {
+              querySnapshot = await db.collection("employees").where("phone", "==", cleaned).get();
+              if (!querySnapshot.empty) {
+                let foundDocId = "";
+                querySnapshot.forEach((d: any) => { foundDocId = d.id; });
+                empRef = db.collection("employees").doc(foundDocId);
+              }
+            }
+          }
         }
       }
 
