@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import fs from "fs";
 import { Client } from "pg";
+import crypto from "crypto";
 
 dotenv.config();
 
@@ -755,7 +756,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
     };
   }
 
-  // Generate a new alphanumeric captcha
+  // Generate a new alphanumeric captcha (stateless signature-based to support multi-container/serverless)
   app.get("/api/auth/captcha", (req, res) => {
     try {
       const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // clear alphanumeric chars
@@ -763,16 +764,11 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
       for (let i = 0; i < 5; i++) {
         captchaText += chars.charAt(Math.floor(Math.random() * chars.length));
       }
-      const captchaId = "cap_" + Math.random().toString(36).substring(2, 12);
-      captchaStore.set(captchaId, captchaText);
       
-      // Automatically prune captchaStore if it grows too large
-      if (captchaStore.size > 2000) {
-        const keys = Array.from(captchaStore.keys());
-        for (let i = 0; i < 500; i++) {
-          captchaStore.delete(keys[i]);
-        }
-      }
+      const timestamp = Date.now();
+      const salt = process.env.JWT_SECRET || "innovalley-secure-salt-2026";
+      const hash = crypto.createHmac("sha256", salt).update(`${timestamp}-${captchaText}`).digest("hex");
+      const captchaId = `${timestamp}.${hash}`;
 
       res.json({ captchaId, captchaText });
     } catch (err: any) {
@@ -796,18 +792,30 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
         return res.status(400).json({ error: "Captcha verification is required." });
       }
 
-      // Verify captcha
-      const storedCaptcha = captchaStore.get(captchaId);
-      if (!storedCaptcha) {
-        return res.status(400).json({ error: "Captcha session expired. Please reload the captcha." });
+      // Verify captcha statelessly
+      try {
+        const parts = captchaId.split(".");
+        if (parts.length !== 2) {
+          return res.status(400).json({ error: "Invalid captcha session. Please reload captcha." });
+        }
+        
+        const [timestampStr, originalHash] = parts;
+        const timestamp = parseInt(timestampStr, 10);
+        
+        // 15 minutes expiration check
+        if (isNaN(timestamp) || Date.now() - timestamp > 15 * 60 * 1000) {
+          return res.status(400).json({ error: "Captcha session expired. Please reload the captcha." });
+        }
+        
+        const salt = process.env.JWT_SECRET || "innovalley-secure-salt-2026";
+        const expectedHash = crypto.createHmac("sha256", salt).update(`${timestampStr}-${capIn}`).digest("hex");
+        
+        if (originalHash !== expectedHash) {
+          return res.status(400).json({ error: "Incorrect captcha code. Please try again." });
+        }
+      } catch (err) {
+        return res.status(400).json({ error: "Failed to verify captcha. Please try again." });
       }
-      
-      if (capIn !== storedCaptcha) {
-        return res.status(400).json({ error: "Incorrect captcha code. Please try again." });
-      }
-
-      // Delete verified captcha
-      captchaStore.delete(captchaId);
 
       const inputNormalized = input.toLowerCase();
 
@@ -1133,6 +1141,30 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
       res.json({ success: true });
     } catch (err: any) {
       console.error("Error deleting project on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete completed tasks for a specific project (Admin action)
+  app.delete("/api/projects/:projectId/tasks/completed", async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const tasksSnap = await db.collection("tasks").where("projectId", "==", projectId).get();
+      let deletedCount = 0;
+      
+      const promises: Promise<any>[] = [];
+      tasksSnap.forEach((doc: any) => {
+        const taskData = doc.data();
+        if (taskData && taskData.status === 'completed') {
+          promises.push(db.collection("tasks").doc(doc.id).delete());
+          deletedCount++;
+        }
+      });
+      
+      await Promise.all(promises);
+      res.json({ success: true, deletedCount });
+    } catch (err: any) {
+      console.error("Error deleting completed tasks on server:", err);
       res.status(500).json({ error: err.message });
     }
   });

@@ -99,6 +99,15 @@ export const deleteProject = async (projectId: string) => {
   return await res.json();
 };
 
+// Delete completed tasks project-wise (Admin action)
+export const deleteCompletedTasks = async (projectId: string) => {
+  const res = await fetch(`/api/projects/${projectId}/tasks/completed`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" }
+  });
+  return await res.json();
+};
+
 // Update employee details (Admin action)
 export const updateEmployee = async (email: string, employee: Partial<Omit<Employee, 'id' | 'email'>>) => {
   const res = await fetch(`/api/employees/${encodeURIComponent(email)}`, {

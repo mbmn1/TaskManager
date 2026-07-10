@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Users, FolderKanban, ShieldCheck, UserCheck, AlertCircle, Sparkles, Trash2, Mail, Phone, Pencil, X, Check, Building2, History, Search } from "lucide-react";
-import { Employee, Project, AuditLog } from "../types";
-import { addEmployee, createProject, deleteEmployee, deleteProject, updateEmployee, updateProject, subscribeAuditLogs } from "../lib/dbService";
+import { Employee, Project, AuditLog, Task } from "../types";
+import { addEmployee, createProject, deleteEmployee, deleteProject, updateEmployee, updateProject, subscribeAuditLogs, subscribeAllTasks, deleteCompletedTasks } from "../lib/dbService";
 import { motion, AnimatePresence } from "motion/react";
 
 interface AdminPanelProps {
@@ -35,6 +35,15 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
       return () => unsubscribe();
     }
   }, [adminSubTab]);
+
+  // Subscribe to all tasks to track completed tasks per project
+  const [allTasks, setAllTasks] = useState<Task[]>([]);
+  useEffect(() => {
+    const unsubscribe = subscribeAllTasks(currentUser.email || "", currentUser.role || "", (tasks) => {
+      setAllTasks(tasks);
+    });
+    return () => unsubscribe();
+  }, [currentUser]);
 
   // Employee creation form state
   const [empName, setEmpName] = useState("");
@@ -112,6 +121,27 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
         }
       } catch (err: any) {
         setDeleteError(err.message || "Failed to delete project.");
+      }
+    }
+  };
+
+  const handleDeleteCompletedTasks = async (projectId: string, projectName: string) => {
+    const userKey = window.prompt("To confirm deletion of completed tasks, please enter the administrator secret key:");
+    if (userKey !== "Mbmn@B!#!951") {
+      alert("Invalid secret key. Deletion aborted.");
+      return;
+    }
+    if (window.confirm(`Are you sure you want to permanently delete all completed tasks for "${projectName}"?`)) {
+      try {
+        setDeleteError(null);
+        const res = await deleteCompletedTasks(projectId);
+        if (res.error) {
+          setDeleteError(res.error);
+        } else {
+          alert(`Successfully deleted ${res.deletedCount || 0} completed tasks from "${projectName}".`);
+        }
+      } catch (err: any) {
+        setDeleteError(err.message || "Failed to delete completed tasks.");
       }
     }
   };
@@ -636,6 +666,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                   {projects.map((proj) => {
                     const membersCount = proj.members ? proj.members.length : 0;
                     const ownerEmployee = employees.find(e => e.email === proj.createdBy || e.phone === proj.createdBy);
+                    const completedTasksCount = allTasks.filter(t => t.projectId === proj.id && t.status === 'completed').length;
                     return (
                       <div key={proj.id} className="p-5 hover:bg-slate-50/40 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div className="space-y-1 max-w-lg overflow-hidden">
@@ -656,7 +687,26 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                             </span>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                        <div className="flex flex-wrap items-center gap-2 self-end sm:self-center shrink-0">
+                          {completedTasksCount > 0 ? (
+                            <button
+                              onClick={() => handleDeleteCompletedTasks(proj.id!, proj.name)}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold rounded-lg text-xs transition-colors border border-amber-100/40 cursor-pointer"
+                              title="Delete all completed tasks for this project"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-amber-600" />
+                              Clean Completed ({completedTasksCount})
+                            </button>
+                          ) : (
+                            <button
+                              disabled
+                              className="flex items-center gap-1 px-3 py-1.5 bg-slate-50 text-slate-400 font-bold rounded-lg text-xs border border-slate-100 cursor-not-allowed opacity-60"
+                              title="No completed tasks to delete"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              Clean Completed (0)
+                            </button>
+                          )}
                           <button
                             onClick={() => {
                               setEditingProject(proj);
@@ -665,14 +715,14 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                               setEditSelectedMembers(proj.members || []);
                               setEditProjError(null);
                             }}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-xs transition-colors border border-slate-200/40"
+                            className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-xs transition-colors border border-slate-200/40 cursor-pointer"
                           >
                             <Pencil className="w-3 h-3" />
                             Edit
                           </button>
                           <button
                             onClick={() => handleDeleteProject(proj.id!)}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold rounded-lg text-xs transition-colors border border-red-100/40"
+                            className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold rounded-lg text-xs transition-colors border border-red-100/40 cursor-pointer"
                           >
                             <Trash2 className="w-3 h-3" />
                             Delete
