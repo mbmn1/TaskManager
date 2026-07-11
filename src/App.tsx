@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { 
-  FolderKanban, 
-  Users, 
-  TrendingUp, 
-  LogOut, 
-  User, 
-  ShieldAlert, 
-  Menu, 
+import {
+  FolderKanban,
+  Users,
+  TrendingUp,
+  LogOut,
+  User,
+  ShieldAlert,
+  Menu,
   X,
   Lock,
   Phone,
@@ -17,72 +17,99 @@ import {
   AlertCircle
 } from "lucide-react";
 import { Employee, Project } from "./types";
-import { subscribeEmployees, subscribeProjects, seedAdminUser, getSessionToken, clearSessionToken } from "./lib/dbService";
+import { subscribeEmployees, subscribeProjects } from "./lib/dbService";
+import { supabase } from "./lib/supabaseClient";
 import Login from "./components/Login";
 import ProjectBoard from "./components/ProjectBoard";
 import AdminPanel from "./components/AdminPanel";
 import ProgressTracker from "./components/ProgressTracker";
 import { motion, AnimatePresence } from "motion/react";
 
-const USER_CACHE_KEY = "innovalley_cached_user";
-
-function loadCachedUser(): Employee | null {
-  try {
-    const token = getSessionToken();
-    const cached = localStorage.getItem(USER_CACHE_KEY);
-    if (token && cached) return JSON.parse(cached);
-  } catch {
-    // ignore malformed cache
-  }
-  return null;
-}
-
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<Employee | null>(loadCachedUser);
+  const [currentUser, setCurrentUser] = useState<Employee | null>(null);
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [activeTab, setActiveTab] = useState<'board' | 'progress' | 'employees' | 'projects' | 'logs'>(
-    loadCachedUser()?.role === 'admin' ? 'progress' : 'board'
-  );
+  const [activeTab, setActiveTab] = useState<'board' | 'progress' | 'employees' | 'projects' | 'logs'>('board');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Initialize auth state from Supabase session on mount
+  useEffect(() => {
+    const initializeAuth = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (session?.user) {
+        // Fetch employee profile
+        const { data: profile } = await supabase
+          .from("employees")
+          .select("*")
+          .eq("id", session.user.id)
+          .single();
+
+        if (profile) {
+          const employee: Employee = {
+            id: profile.id,
+            name: profile.name,
+            email: profile.email,
+            phone: profile.phone || "",
+            designation: profile.designation || "",
+            role: profile.role,
+          };
+          setCurrentUser(employee);
+          setActiveTab(employee.role === 'admin' ? 'progress' : 'board');
+        }
+      }
+    };
+
+    initializeAuth();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        // Fetch employee profile
+        const { data: profile } = await supabase
+          .from("employees")
+          .select("*")
+          .eq("id", session.user.id)
+          .single();
+
+        if (profile) {
+          const employee: Employee = {
+            id: profile.id,
+            name: profile.name,
+            email: profile.email,
+            phone: profile.phone || "",
+            designation: profile.designation || "",
+            role: profile.role,
+          };
+          setCurrentUser(employee);
+          if (event === 'SIGNED_IN') {
+            setActiveTab(employee.role === 'admin' ? 'progress' : 'board');
+          }
+        }
+      } else {
+        setCurrentUser(null);
+      }
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, []);
 
   // Handle successful login
   const handleLoginSuccess = (user: Employee) => {
     setCurrentUser(user);
-    try {
-      localStorage.setItem(USER_CACHE_KEY, JSON.stringify(user));
-    } catch {
-      // ignore storage failures (e.g. private browsing)
-    }
-    if (user.role === 'admin') {
-      setActiveTab('progress');
-    } else {
-      setActiveTab('board');
-    }
+    setActiveTab(user.role === 'admin' ? 'progress' : 'board');
   };
 
   // Handle Logout
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     setCurrentUser(null);
-    clearSessionToken();
-    try {
-      localStorage.removeItem(USER_CACHE_KEY);
-    } catch {
-      // ignore storage failures
-    }
   };
-
-  // If the server rejects our session token (expired, or secret rotated), fall back to the login screen.
-  useEffect(() => {
-    const onSessionExpired = () => handleLogout();
-    window.addEventListener("innovalley:session-expired", onSessionExpired);
-    return () => window.removeEventListener("innovalley:session-expired", onSessionExpired);
-  }, []);
 
   // Change Password state
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
@@ -107,24 +134,12 @@ export default function App() {
     setChangePasswordLoading(true);
 
     try {
-      const token = getSessionToken();
-      const res = await fetch("/api/auth/change-password", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({
-          email: currentUser?.email,
-          currentPassword,
-          newPassword
-        })
-      });
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (error) {
+        setChangePasswordError(error.message || "Failed to update password.");
+      } else {
         setChangePasswordSuccess("Password updated successfully!");
-        setCurrentPassword("");
         setNewPassword("");
         setConfirmPassword("");
 
@@ -132,8 +147,6 @@ export default function App() {
           setShowChangePasswordModal(false);
           setChangePasswordSuccess(null);
         }, 1500);
-      } else {
-        setChangePasswordError(data.error || "Failed to update password.");
       }
     } catch (err: any) {
       setChangePasswordError(err.message || "Failed to connect to server.");
@@ -298,7 +311,6 @@ export default function App() {
                 onClick={() => {
                   setChangePasswordError(null);
                   setChangePasswordSuccess(null);
-                  setCurrentPassword("");
                   setNewPassword("");
                   setConfirmPassword("");
                   setShowChangePasswordModal(true);
@@ -536,18 +548,6 @@ export default function App() {
                       <span>{changePasswordSuccess}</span>
                     </div>
                   )}
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Current Password</label>
-                    <input
-                      type="password"
-                      required
-                      placeholder="Enter your current password"
-                      value={currentPassword}
-                      onChange={(e) => setCurrentPassword(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium text-slate-800"
-                    />
-                  </div>
 
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">New Password</label>
