@@ -200,29 +200,31 @@ async function runSupabaseMigrations() {
 }
 
 
-// Initialize Supabase if keys are provided
+// Initialize Supabase clients
 const supabaseUrl = process.env.SUPABASE_URL || "";
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || "";
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
 
-let supabase: any = null;
-if (supabaseUrl && supabaseKey) {
+// Service-role client for admin operations and JWT verification
+let supabaseAdmin: any = null;
+if (supabaseUrl && supabaseServiceRoleKey) {
   try {
-    supabase = createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        persistSession: false
-      }
+    supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
+      auth: { persistSession: false }
     });
-    console.log("Supabase Client initialized successfully.");
+    console.log("Supabase admin client initialized.");
   } catch (err) {
-    console.error("Failed to initialize Supabase Client:", err);
+    console.error("Failed to initialize Supabase admin client:", err);
   }
 }
 
-if (process.env.VERCEL && !supabase) {
+// Keep module-level supabase for backwards compatibility with existing code
+const supabase = supabaseAdmin;
+
+if (process.env.VERCEL && !supabaseAdmin) {
   console.error(
-    "CRITICAL: Deployed on Vercel without Supabase configured. All data will be held " +
-    "in ephemeral in-memory state and lost between cold starts/deployments. Set SUPABASE_URL " +
-    "and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY) in the Vercel project's Environment Variables."
+    "CRITICAL: Deployed on Vercel without Supabase configured. Set SUPABASE_URL " +
+    "and SUPABASE_SERVICE_ROLE_KEY in Vercel Environment Variables."
   );
 }
 
@@ -659,15 +661,47 @@ function verifySessionToken(token: string): { id: string; email: string; role: s
   }
 }
 
-function requireAuth(req: any, res: any, next: any) {
+async function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  const payload = token ? verifySessionToken(token) : null;
-  if (!payload) {
-    return res.status(401).json({ error: "Session expired or invalid. Please log in again." });
+
+  if (!token) {
+    return res.status(401).json({ error: "Missing authorization token." });
   }
-  req.authUser = payload;
-  next();
+
+  try {
+    // Verify Supabase JWT
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+
+    if (error || !user) {
+      return res.status(401).json({ error: "Invalid or expired token." });
+    }
+
+    // Fetch employee profile to get role
+    const { data: profile, error: profileErr } = await supabaseAdmin
+      .from('employees')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+
+    if (profileErr || !profile) {
+      return res.status(401).json({ error: "User profile not found." });
+    }
+
+    // Attach user info for route handlers
+    req.authUser = {
+      id: user.id,
+      email: user.email || "",
+      role: profile.role,
+      name: profile.name || "",
+      phone: profile.phone || ""
+    };
+
+    next();
+  } catch (err: any) {
+    console.error("Auth error:", err);
+    res.status(401).json({ error: "Authentication failed." });
+  }
 }
 
 function requireAdmin(req: any, res: any, next: any) {
