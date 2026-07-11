@@ -83,6 +83,16 @@ export const updateProjectMembers = async (projectId: string, members: string[])
   return await res.json();
 };
 
+// Update a project
+export const updateProject = async (projectId: string, updates: Partial<Project>) => {
+  const res = await authFetch(`/api/projects/${projectId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates)
+  });
+  return await res.json();
+};
+
 // Delete a project
 export const deleteProject = async (projectId: string) => {
   const res = await authFetch(`/api/projects/${projectId}`, { method: "DELETE" });

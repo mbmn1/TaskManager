@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Users, FolderKanban, ShieldCheck, UserCheck, AlertCircle, Sparkles, Trash2, Mail, Phone, Pencil, X, Check, Building2, History, Search } from "lucide-react";
 import { Employee, Project, AuditLog, Task } from "../types";
-import { addEmployee, createProject, deleteEmployee, deleteProject, updateEmployee, updateProject, subscribeAuditLogs, subscribeAllTasks, deleteCompletedTasks } from "../lib/dbService";
+import { addEmployee, createProject, deleteEmployee, deleteProject, updateEmployee, updateProject, subscribeLogs, subscribeAllTasks, deleteCompletedTasks } from "../lib/dbService";
 import { motion, AnimatePresence } from "motion/react";
 
 interface AdminPanelProps {
@@ -29,7 +29,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   // Subscribe to audit logs
   useEffect(() => {
     if (adminSubTab === 'logs') {
-      const unsubscribe = subscribeAuditLogs((updatedLogs) => {
+      const unsubscribe = subscribeLogs((updatedLogs) => {
         setAuditLogs(updatedLogs);
       });
       return () => unsubscribe();
