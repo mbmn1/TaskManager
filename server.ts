@@ -226,26 +226,15 @@ if (process.env.VERCEL && !supabase) {
   );
 }
 
-// Local DB in-memory cache (no file persistence)
-let localDB: { [collection: string]: { [id: string]: any } } = {
-  employees: {},
-  projects: {},
-  tasks: {},
-  notifications: {},
-  logs: {}
-};
-
+// DBWrapper: Supabase-only, no fallback. Fails fast if DB not configured.
 class DBWrapper {
-  public useLocalFallback = false;
-
   async testSupabase() {
     if (!supabase) {
-      console.warn("Supabase configuration missing. Falling back to local file-based database.");
-      this.useLocalFallback = true;
-      return;
+      throw new Error(
+        "FATAL: Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in environment."
+      );
     }
-    this.useLocalFallback = false;
-    console.log("Supabase client active. Strict sync enabled with zero local fallback.");
+    console.log("Supabase client active. Database-driven mode.");
 
     try {
       console.log("Cleaning up old and unwanted employee accounts from remote Supabase via REST API...");
