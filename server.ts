@@ -171,23 +171,7 @@ async function runSupabaseMigrations() {
       }
     }
 
-    // Seed admin and developer accounts
-    // Clean up old phone-number based IDs to keep table strictly clean
-    await client.query(`
-      DELETE FROM employees WHERE id IN ('9848884897', '9848884899');
-    `);
-
-    const seededDefaultHash = hashPassword("Mbmn@B!#!951");
-    await client.query(
-      `INSERT INTO employees (id, name, email, phone, designation, role, password)
-       VALUES
-         ('innovalleyservices@gmail.com', 'Innovalley Services', 'innovalleyservices@gmail.com', '9848884897', 'Project Director (Admin)', 'admin', $1),
-         ('mbmnmurali@gmail.com', 'Murali Krishna', 'mbmnmurali@gmail.com', '9848884899', 'Lead Developer', 'employee', $1)
-       ON CONFLICT (id) DO NOTHING;`,
-      [seededDefaultHash]
-    );
-
-    console.log("Supabase PostgreSQL tables checked, RLS bypassed, and seeded successfully.");
+    console.log("Supabase PostgreSQL tables checked and created successfully.");
   } catch (err: any) {
     console.error("Failed to run Supabase PostgreSQL migrations:", err.message);
   } finally {
@@ -230,63 +214,6 @@ if (process.env.VERCEL && !supabaseAdmin) {
 
 // DBWrapper: Supabase-only, no fallback. Fails fast if DB not configured.
 class DBWrapper {
-  async testSupabase() {
-    if (!supabase) {
-      throw new Error(
-        "FATAL: Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in environment."
-      );
-    }
-    console.log("Supabase client active. Database-driven mode.");
-
-    try {
-      console.log("Cleaning up old and unwanted employee accounts from remote Supabase via REST API...");
-      
-      const { error: delErr } = await supabase
-        .from("employees")
-        .delete()
-        .in("id", ["9848884897", "9848884899"]);
-        
-      if (delErr) {
-        console.warn("Supabase REST cleanup warning:", delErr.message);
-      } else {
-        console.log("Successfully cleaned up old/unwanted employee accounts in Supabase via REST API.");
-      }
-
-      // Ensure both default admin and developer accounts are seeded in Supabase via REST API
-      const defaultAdmin = {
-        id: "innovalleyservices@gmail.com",
-        name: "Innovalley Services",
-        email: "innovalleyservices@gmail.com",
-        phone: "9848884897",
-        designation: "Project Director (Admin)",
-        role: "admin",
-        password: hashPassword("Mbmn@B!#!951")
-      };
-
-      const defaultDev = {
-        id: "mbmnmurali@gmail.com",
-        name: "Murali Krishna",
-        email: "mbmnmurali@gmail.com",
-        phone: "9848884899",
-        designation: "Lead Developer",
-        role: "employee",
-        password: hashPassword("Mbmn@B!#!951")
-      };
-
-      // ignoreDuplicates: only inserts if the row doesn't exist yet — a plain upsert would
-      // silently reset the admin/dev password back to this default on every cold start,
-      // wiping out any password change made via the change-password feature.
-      const { error: adminErr } = await supabase.from("employees").upsert(defaultAdmin, { onConflict: "id", ignoreDuplicates: true });
-      if (adminErr) console.warn("Supabase REST admin seeding warning:", adminErr.message);
-
-      const { error: devErr } = await supabase.from("employees").upsert(defaultDev, { onConflict: "id", ignoreDuplicates: true });
-      if (devErr) console.warn("Supabase REST developer seeding warning:", devErr.message);
-
-      console.log("Successfully validated/seeded Admin and Developer accounts via REST API.");
-    } catch (err: any) {
-      console.error("Error performing Supabase REST cleanup/seeding:", err.message);
-    }
-  }
 
   checkRLSError(err: any) {
     if (!err) return;
@@ -573,9 +500,6 @@ class DBWrapper {
 
 const db = new DBWrapper();
 runSupabaseMigrations()
-  .then(() => {
-    db.testSupabase();
-  })
   .catch((err) => {
     console.error("Critical error in runSupabaseMigrations on startup:", err);
   });
