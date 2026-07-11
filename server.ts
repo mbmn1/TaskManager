@@ -214,16 +214,7 @@ if (process.env.VERCEL && !supabaseAdmin) {
 
 // DBWrapper: Supabase-only, no fallback. Fails fast if DB not configured.
 class DBWrapper {
-
-  checkRLSError(err: any) {
-    if (!err) return;
-    const msg = (err.message || "").toLowerCase();
-    console.warn("Supabase query warning:", msg);
-  }
-
   collection(name: string) {
-    const self = this;
-    
     class CollectionQuery {
       private filters: Array<{ field: string; op: string; val: any }> = [];
       private sortField: string | null = null;
@@ -241,96 +232,29 @@ class DBWrapper {
       }
 
       async get(): Promise<any> {
-        if (!self.useLocalFallback && supabase) {
-          try {
-            let query = supabase.from(name).select("*");
-            
-            for (const filter of this.filters) {
-              const { field, op, val } = filter;
-              if (op === "==") {
-                query = query.eq(field, val);
-              } else if (op === "array-contains") {
-                // Handle JSONB array contains or text array contains in Supabase
-                if (field === "members") {
-                  query = query.contains(field, JSON.stringify([val]));
-                } else {
-                  query = query.contains(field, [val]);
-                }
-              }
+        let query = supabase.from(name).select("*");
+
+        for (const filter of this.filters) {
+          const { field, op, val } = filter;
+          if (op === "==") {
+            query = query.eq(field, val);
+          } else if (op === "array-contains") {
+            if (field === "members") {
+              query = query.contains(field, JSON.stringify([val]));
+            } else {
+              query = query.contains(field, [val]);
             }
-
-            if (this.sortField) {
-              query = query.order(this.sortField, { ascending: this.sortDir === "asc" });
-            }
-
-            const { data, error } = await query;
-            if (error) {
-              console.error(`Supabase query error on '${name}':`, error.message);
-              throw error;
-            }
-
-            const docs = (data || []).map((item: any) => ({
-              id: item.id || "",
-              data: () => item
-            }));
-
-            return {
-              empty: docs.length === 0,
-              size: docs.length,
-              docs,
-              forEach(callback: any) {
-                docs.forEach(doc => callback(doc));
-              }
-            };
-          } catch (err: any) {
-            console.warn(`Supabase query failed on '${name}', falling back locally:`, err.message);
-            self.checkRLSError(err);
-            // Fall through to local fallback
           }
         }
 
-        // FALLBACK LOCAL DB LOGIC
-        if (!localDB[name]) {
-          localDB[name] = {};
-        }
-
-        let items = Object.values(localDB[name]);
-
-        // Filter
-        for (const filter of this.filters) {
-          const { field, op, val } = filter;
-          items = items.filter(item => {
-            const itemVal = item[field];
-            if (op === "==") {
-              const target = typeof val === "string" ? val.trim().toLowerCase() : val;
-              const source = typeof itemVal === "string" ? itemVal.trim().toLowerCase() : itemVal;
-              return source === target;
-            }
-            if (op === "array-contains") {
-              const normalizedVal = typeof val === "string" ? val.trim().toLowerCase() : val;
-              if (Array.isArray(itemVal)) {
-                return itemVal.some(m => typeof m === "string" ? m.trim().toLowerCase() : m === normalizedVal);
-              }
-              return false;
-            }
-            return true;
-          });
-        }
-
-        // Sort
         if (this.sortField) {
-          const field = this.sortField;
-          const dir = this.sortDir === "desc" ? -1 : 1;
-          items.sort((a, b) => {
-            const valA = a[field] ?? 0;
-            const valB = b[field] ?? 0;
-            if (valA < valB) return -1 * dir;
-            if (valA > valB) return 1 * dir;
-            return 0;
-          });
+          query = query.order(this.sortField, { ascending: this.sortDir === "asc" });
         }
 
-        const docs = items.map(item => ({
+        const { data, error } = await query;
+        if (error) throw error;
+
+        const docs = (data || []).map((item: any) => ({
           id: item.id || "",
           data: () => item
         }));
@@ -339,7 +263,7 @@ class DBWrapper {
           empty: docs.length === 0,
           size: docs.length,
           docs,
-          forEach(callback: any) {
+          forEach(callback: (doc: any) => void) {
             docs.forEach(doc => callback(doc));
           }
         };
@@ -348,136 +272,48 @@ class DBWrapper {
 
     return {
       doc(docId?: string) {
-        const id = docId || Math.random().toString(36).substring(2, 15);
+        const id = docId || crypto.randomUUID();
         return {
           id,
           async get() {
-            if (!self.useLocalFallback && supabase) {
-              try {
-                const { data, error } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
-                if (error) throw error;
-                return {
-                  exists: !!data,
-                  id,
-                  data: () => data || null
-                };
-              } catch (err: any) {
-                console.warn(`Supabase get doc handled warning on '${name}/${id}':`, err.message);
-                self.checkRLSError(err);
-              }
-            }
-
-            // FALLBACK LOGIC
-            if (!localDB[name]) {
-              localDB[name] = {};
-            }
-            const data = localDB[name][id];
+            const { data, error } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
+            if (error) throw error;
             return {
-              id,
               exists: !!data,
+              id,
               data: () => data || null
             };
           },
 
           async set(data: any, options?: { merge?: boolean }) {
             const isMerge = options?.merge === true;
-            if (!self.useLocalFallback && supabase) {
-              try {
-                let mergedData = { ...data };
-                if (isMerge) {
-                  const { data: existing } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
-                  if (existing) {
-                    mergedData = { ...existing, ...data };
-                  }
-                }
-                const { error } = await supabase.from(name).upsert({ id, ...mergedData });
-                if (error) throw error;
-                
-                // Write to fallback for robustness
-                if (!localDB[name]) localDB[name] = {};
-                localDB[name][id] = isMerge 
-                  ? { ...(localDB[name][id] || {}), ...data, id }
-                  : { ...data, id };
-                return;
-              } catch (err: any) {
-                console.warn(`Supabase set doc handled warning on '${name}/${id}':`, err.message);
-                self.checkRLSError(err);
-                // Fall through to write to fallback for robustness
-                if (!localDB[name]) localDB[name] = {};
-                localDB[name][id] = isMerge 
-                  ? { ...(localDB[name][id] || {}), ...data, id }
-                  : { ...data, id };
-                return;
+            let finalData = { ...data };
+
+            if (isMerge) {
+              const { data: existing } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
+              if (existing) {
+                finalData = { ...existing, ...data };
               }
             }
 
-            // FALLBACK LOGIC
-            if (!localDB[name]) {
-              localDB[name] = {};
-            }
-            localDB[name][id] = isMerge 
-              ? { ...(localDB[name][id] || {}), ...data, id }
-              : { ...data, id };
+            const { error } = await supabase.from(name).upsert({ id, ...finalData });
+            if (error) throw error;
           },
 
           async update(data: any) {
-            if (!self.useLocalFallback && supabase) {
-              try {
-                const { error } = await supabase.from(name).update(data).eq("id", id);
-                if (error) throw error;
-                
-                // Write to fallback for robustness
-                if (!localDB[name]) localDB[name] = {};
-                localDB[name][id] = { ...(localDB[name][id] || {}), ...data };
-                return;
-              } catch (err: any) {
-                console.warn(`Supabase update doc handled warning on '${name}/${id}':`, err.message);
-                self.checkRLSError(err);
-                // Fall through to write to fallback for robustness
-                if (!localDB[name]) localDB[name] = {};
-                localDB[name][id] = { ...(localDB[name][id] || {}), ...data };
-                return;
-              }
-            }
-
-            // FALLBACK LOGIC
-            if (!localDB[name]) {
-              localDB[name] = {};
-            }
-            localDB[name][id] = { ...(localDB[name][id] || {}), ...data };
+            const { error } = await supabase.from(name).update(data).eq("id", id);
+            if (error) throw error;
           },
 
           async delete() {
-            if (!self.useLocalFallback && supabase) {
-              try {
-                const { error } = await supabase.from(name).delete().eq("id", id);
-                if (error) throw error;
-                
-                if (localDB[name]) {
-                  delete localDB[name][id];
-                }
-                return;
-              } catch (err: any) {
-                console.warn(`Supabase delete doc handled warning on '${name}/${id}':`, err.message);
-                self.checkRLSError(err);
-                // Fall through to write to fallback for robustness
-                if (localDB[name]) {
-                  delete localDB[name][id];
-                }
-                return;
-              }
-            }
-
-            // FALLBACK LOGIC
-            if (localDB[name]) {
-              delete localDB[name][id];
-            }
+            const { error } = await supabase.from(name).delete().eq("id", id);
+            if (error) throw error;
           }
         };
       },
 
       async add(data: any) {
-        const id = Math.random().toString(36).substring(2, 15);
+        const id = crypto.randomUUID();
         const ref = this.doc(id);
         await ref.set(data);
         return ref;
@@ -640,30 +476,46 @@ app.use((req, res, next) => {
   // Add new employee
   app.post("/api/employees", requireAuth, requireAdmin, async (req, res) => {
     try {
-      const employee = req.body;
-      const phoneNormalized = employee.phone ? employee.phone.replace(/[^0-9]/g, "") : "";
-      if (!phoneNormalized || phoneNormalized.length < 10) {
-        return res.status(400).json({ error: "A valid 10-digit mobile number is required as the primary ID." });
-      }
-      
-      const empRef = db.collection("employees").doc(phoneNormalized);
-      const existing = await empRef.get();
-      if (existing.exists) {
-        return res.status(400).json({ error: "An employee with this mobile number already exists." });
+      const { name, email, phone, designation, password } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required." });
       }
 
-      const emailNormalized = employee.email.trim().toLowerCase();
-      const newEmp = {
-        ...employee,
-        id: phoneNormalized,
-        email: emailNormalized,
-        phone: phoneNormalized,
-        password: hashPassword(employee.password ? employee.password.trim() : "123456"),
-        role: 'employee'
-      };
-      await empRef.set(newEmp);
-      const { password: _newEmpPassword, ...safeNewEmp } = newEmp;
-      res.json(safeNewEmp);
+      const emailTrimmed = email.trim().toLowerCase();
+      const passwordTrimmed = password.trim();
+
+      // Create Supabase Auth user (service-role only)
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email: emailTrimmed,
+        password: passwordTrimmed,
+        email_confirm: true
+      });
+
+      if (authError) {
+        if (authError.message?.includes("already registered")) {
+          return res.status(400).json({ error: "Employee with this email already exists." });
+        }
+        return res.status(400).json({ error: authError.message });
+      }
+
+      // Create employee profile row with UUID from auth user
+      const { error: profileError } = await supabaseAdmin
+        .from('employees')
+        .insert({
+          id: authData.user.id,
+          name: name?.trim() || "",
+          email: emailTrimmed,
+          phone: phone?.trim() || null,
+          designation: designation?.trim() || null,
+          role: 'employee'
+        });
+
+      if (profileError) {
+        return res.status(400).json({ error: profileError.message });
+      }
+
+      res.json({ success: true, message: "Employee created successfully." });
     } catch (err: any) {
       console.error("Error adding employee on server:", err);
       res.status(500).json({ error: err.message });
