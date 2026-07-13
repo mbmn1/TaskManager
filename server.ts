@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
@@ -502,13 +501,20 @@ class DBWrapper {
 }
 
 const db = new DBWrapper();
-runSupabaseMigrations()
-  .then(() => {
-    db.testSupabase();
-  })
-  .catch((err) => {
-    console.error("Critical error in runSupabaseMigrations on startup:", err);
-  });
+if (process.env.VERCEL) {
+  console.log("Running in serverless environment (Vercel). Skipping automatic schema migration on boot.");
+  if (supabase) {
+    db.testSupabase().catch(err => console.warn("Supabase initial check skipped or failed:", err.message));
+  }
+} else {
+  runSupabaseMigrations()
+    .then(() => {
+      db.testSupabase();
+    })
+    .catch((err) => {
+      console.error("Critical error in runSupabaseMigrations on startup:", err);
+    });
+}
 
 // Lazy initialization of Gemini client
 let aiClient: GoogleGenAI | null = null;
@@ -1593,6 +1599,7 @@ app.use((req, res, next) => {
 
   async function runLocalServer() {
     if (process.env.NODE_ENV !== "production") {
+      const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: "spa",
