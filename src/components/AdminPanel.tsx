@@ -87,6 +87,9 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   // General operations state
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // Category filter state for users directory
+  const [selectedCategory, setSelectedCategory] = useState<'all' | 'admin' | 'employee' | 'client'>('all');
+
   // Filter out the admin themselves from list of employees to assign
   const otherEmployees = employees.filter(e => e.role !== "admin");
 
@@ -513,7 +516,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                     <Users className="w-4.5 h-4.5" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-slate-800 text-sm font-display">Manage Team Employees</h3>
+                    <h3 className="font-bold text-slate-800 text-sm font-display">Manage Workspace Users</h3>
                     <p className="text-[10px] text-slate-400">View, edit, and revoke user credentials</p>
                   </div>
                 </div>
@@ -522,11 +525,69 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                 </span>
               </div>
 
+              {/* Category Filter Tabs */}
+              <div className="px-5 py-3 bg-slate-50/50 border-b border-slate-100 flex flex-wrap gap-2 items-center justify-between animate-fade-in" id="user-category-filters">
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    onClick={() => setSelectedCategory('all')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      selectedCategory === 'all'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>All Users</span>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${selectedCategory === 'all' ? 'bg-indigo-700 text-indigo-100' : 'bg-slate-100 text-slate-500'}`}>
+                      {employees.length}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setSelectedCategory('admin')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      selectedCategory === 'admin'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>Administrators</span>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${selectedCategory === 'admin' ? 'bg-indigo-700 text-indigo-100' : 'bg-slate-100 text-slate-500'}`}>
+                      {employees.filter(e => e.role === 'admin').length}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setSelectedCategory('employee')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      selectedCategory === 'employee'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>Employees</span>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${selectedCategory === 'employee' ? 'bg-indigo-700 text-indigo-100' : 'bg-slate-100 text-slate-500'}`}>
+                      {employees.filter(e => e.role === 'employee' || !e.role).length}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setSelectedCategory('client')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      selectedCategory === 'client'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>Clients</span>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${selectedCategory === 'client' ? 'bg-indigo-700 text-indigo-100' : 'bg-slate-100 text-slate-500'}`}>
+                      {employees.filter(e => e.role === 'client').length}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50/50 border-b border-slate-100">
-                      <th className="p-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Employee</th>
+                      <th className="p-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">User</th>
                       <th className="p-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Contact Info</th>
                       <th className="p-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Designation</th>
                       <th className="p-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Access Level</th>
@@ -534,7 +595,13 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {employees.map((emp) => {
+                    {employees.filter(emp => {
+                      if (selectedCategory === 'all') return true;
+                      if (selectedCategory === 'admin') return emp.role === 'admin';
+                      if (selectedCategory === 'employee') return emp.role === 'employee' || !emp.role;
+                      if (selectedCategory === 'client') return emp.role === 'client';
+                      return true;
+                    }).map((emp) => {
                       const isSystemAdmin = emp.role === "admin";
                       const initials = emp.name ? emp.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) : "U";
                       return (

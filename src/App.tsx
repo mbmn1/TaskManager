@@ -15,10 +15,11 @@ import {
   History,
   Key,
   AlertCircle,
-  Calendar
+  Calendar,
+  Bell
 } from "lucide-react";
-import { Employee, Project } from "./types";
-import { subscribeEmployees, subscribeProjects, seedAdminUser } from "./lib/dbService";
+import { Employee, Project, EmailNotification } from "./types";
+import { subscribeEmployees, subscribeProjects, seedAdminUser, subscribeNotifications } from "./lib/dbService";
 import Login from "./components/Login";
 import ProjectBoard from "./components/ProjectBoard";
 import AdminPanel from "./components/AdminPanel";
@@ -31,6 +32,28 @@ export default function App() {
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [notifications, setNotifications] = useState<EmailNotification[]>([]);
+  const [showNotificationsDropdown, setShowNotificationsDropdown] = useState(false);
+  const [selectedNotification, setSelectedNotification] = useState<EmailNotification | null>(null);
+
+  const stripHtmlTags = (htmlStr: string) => {
+    if (!htmlStr) return "";
+    return htmlStr
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "") // strip style blocks first
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>(() => {
+    try {
+      // Lazy load from localStorage after checking currentUser, but standard load here
+      return JSON.parse(localStorage.getItem("read_notifications") || "[]");
+    } catch {
+      return [];
+    }
+  });
+
   const [activeTab, setActiveTab] = useState<'board' | 'progress' | 'employees' | 'projects' | 'logs' | 'attendance'>('board');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -81,6 +104,8 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: currentUser?.email,
+          phone: currentUser?.phone,
+          id: currentUser?.id,
           currentPassword,
           newPassword
         })
@@ -158,9 +183,15 @@ export default function App() {
         }
       );
 
+      // Subscribe to real-time email/SMS notifications
+      const unsubscribeNotifications = subscribeNotifications((updatedNotifs) => {
+        setNotifications(updatedNotifs);
+      });
+
       return () => {
         unsubscribeEmployees();
         unsubscribeProjects();
+        unsubscribeNotifications();
       };
     }
   }, [currentUser]);
@@ -171,6 +202,32 @@ export default function App() {
 
   const currentUserEmailNorm = (currentUser.email || "").toLowerCase().trim();
   const isUserAdmin = currentUser.role === 'admin';
+
+  const filteredNotifications = notifications.filter(notif => {
+    if (isUserAdmin) return true;
+    const targetEmail = (currentUser?.email || "").trim().toLowerCase();
+    const targetPhone = (currentUser?.phone || "").trim().replace(/[^0-9]/g, "");
+    const notifEmail = (notif.toEmail || "").trim().toLowerCase();
+    return notifEmail === targetEmail || (targetPhone && notifEmail.includes(targetPhone));
+  });
+
+  const unreadNotificationsCount = filteredNotifications.filter(notif => !readNotificationIds.includes(notif.id)).length;
+
+  const handleMarkAllNotificationsRead = () => {
+    const allIds = filteredNotifications.map(n => n.id);
+    setReadNotificationIds(allIds);
+    localStorage.setItem("read_notifications", JSON.stringify(allIds));
+  };
+
+  const handleSelectNotification = (notif: EmailNotification) => {
+    setSelectedNotification(notif);
+    setShowNotificationsDropdown(false);
+    if (!readNotificationIds.includes(notif.id)) {
+      const updatedIds = [...readNotificationIds, notif.id];
+      setReadNotificationIds(updatedIds);
+      localStorage.setItem("read_notifications", JSON.stringify(updatedIds));
+    }
+  };
 
   const userInitials = currentUser.name ? currentUser.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2) : "U";
 
@@ -202,17 +259,19 @@ export default function App() {
             </button>
           )}
 
-          <button
-            onClick={() => setActiveTab('progress')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-xs transition-all cursor-pointer ${
-              activeTab === 'progress'
-                ? 'bg-indigo-50 text-indigo-700'
-                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-            }`}
-          >
-            <TrendingUp className="w-4 h-4" />
-            Progress Analytics
-          </button>
+          {currentUser.role !== 'client' && (
+            <button
+              onClick={() => setActiveTab('progress')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-xs transition-all cursor-pointer ${
+                activeTab === 'progress'
+                  ? 'bg-indigo-50 text-indigo-700'
+                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              <TrendingUp className="w-4 h-4" />
+              Progress Analytics
+            </button>
+          )}
 
           {isUserAdmin && (
             <>
@@ -226,7 +285,7 @@ export default function App() {
                 }`}
               >
                 <Users className="w-4 h-4" />
-                Employee Directory
+                Users Directory
               </button>
               <button
                 onClick={() => setActiveTab('projects')}
@@ -253,7 +312,7 @@ export default function App() {
             </>
           )}
 
-          {(isUserAdmin || currentUser.role === 'employee') && (
+          {(isUserAdmin || (currentUser.role === 'employee' && currentUser.trackAttendance !== false)) && (
             <button
               onClick={() => setActiveTab('attendance')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-xs transition-all cursor-pointer ${
@@ -271,14 +330,14 @@ export default function App() {
         {/* User Info Section */}
         <div className="p-4 border-t border-slate-100 bg-slate-50/50">
           <div className="flex items-center gap-3 p-1.5">
-            <div className="w-9 h-9 rounded-full bg-indigo-100 border-2 border-indigo-200 flex items-center justify-center font-bold text-indigo-700 text-xs">
+            <div className="w-9 h-9 rounded-full bg-indigo-100 border-2 border-indigo-200 flex items-center justify-center font-bold text-indigo-700 text-xs shrink-0">
               {userInitials}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-bold text-slate-800 truncate">{currentUser.name}</p>
               <p className="text-[10px] font-mono text-slate-400 font-medium truncate">{currentUser.email}</p>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 shrink-0">
               <button
                 onClick={() => {
                   setChangePasswordError(null);
@@ -288,7 +347,7 @@ export default function App() {
                   setConfirmPassword("");
                   setShowChangePasswordModal(true);
                 }}
-                title="Change Password"
+                title="Change Login PIN"
                 className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
               >
                 <Key className="w-4 h-4" />
@@ -296,7 +355,7 @@ export default function App() {
               <button
                 onClick={handleLogout}
                 title="Sign Out Session"
-                className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
               >
                 <LogOut className="w-4 h-4" />
               </button>
@@ -329,7 +388,7 @@ export default function App() {
             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 font-display">
               {activeTab === 'board' && "Project Workspace"}
               {activeTab === 'progress' && "Progress Analytics & Metrics"}
-              {activeTab === 'employees' && "Employee Directory"}
+              {activeTab === 'employees' && "Users Directory"}
               {activeTab === 'projects' && "Project Workspaces"}
               {activeTab === 'logs' && "System Activity Logs"}
               {isUserAdmin && (
@@ -341,23 +400,76 @@ export default function App() {
             <p className="text-xs text-slate-400 font-medium">
               {activeTab === 'board' && "Internal Dev Teams"}
               {activeTab === 'progress' && "Productivity Statistics & Dynamic Status Overviews"}
-              {activeTab === 'employees' && "Add, Edit, and Manage members permissions"}
+              {activeTab === 'employees' && "Add, Edit, and Manage user access and permissions"}
               {activeTab === 'projects' && "Create, Customize, and Assign project boards"}
               {activeTab === 'logs' && "System-wide operation logs audit trail"}
             </p>
           </div>
 
           {/* Right Action buttons */}
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 hidden sm:inline-block">
-              {currentUser.role === 'admin' ? "Administrator" : "Employee"}
-            </span>
-            <button
-              onClick={handleLogout}
-              className="px-3.5 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 md:hidden cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" /> Out
-            </button>
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Notification Bell */}
+            <div className="relative" id="notifications-bell-container">
+              <button
+                onClick={() => setShowNotificationsDropdown(!showNotificationsDropdown)}
+                className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer relative"
+                title="Notifications"
+                id="notifications-bell-btn"
+              >
+                <Bell className="w-4.5 h-4.5" />
+                {unreadNotificationsCount > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full ring-2 ring-white animate-bounce" />
+                )}
+              </button>
+              
+              {showNotificationsDropdown && (
+                <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 overflow-hidden py-1 max-h-96 flex flex-col" id="notifications-dropdown-menu">
+                  <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <span className="text-xs font-bold text-slate-800">Notifications ({filteredNotifications.length})</span>
+                    {unreadNotificationsCount > 0 && (
+                      <button
+                        onClick={handleMarkAllNotificationsRead}
+                        className="text-[10px] text-indigo-600 hover:text-indigo-700 font-bold cursor-pointer"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                  </div>
+                  <div className="overflow-y-auto flex-1 divide-y divide-slate-100 max-h-80">
+                    {filteredNotifications.length === 0 ? (
+                      <div className="py-8 text-center text-slate-400 text-xs font-medium">
+                        No notifications found.
+                      </div>
+                    ) : (
+                      filteredNotifications.map((notif) => {
+                        const isRead = readNotificationIds.includes(notif.id);
+                        const cleanPreview = stripHtmlTags(notif.body);
+                        return (
+                          <button
+                            key={notif.id}
+                            onClick={() => handleSelectNotification(notif)}
+                            className={`w-full p-3.5 text-left transition-all hover:bg-slate-50 flex flex-col cursor-pointer border-l-2 ${
+                              isRead ? 'border-transparent opacity-75' : 'border-indigo-500 bg-indigo-50/20'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-1.5 mb-1 w-full">
+                              <span className="text-[9px] font-extrabold text-indigo-700 truncate bg-indigo-100/60 px-1.5 py-0.5 rounded">
+                                {notif.projectName || "System"}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-mono">
+                                {new Date(notif.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            <p className="text-xs font-bold text-slate-800 mb-1 line-clamp-1">{notif.subject}</p>
+                            <p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2">{cleanPreview || "Click to view update details"}</p>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -380,14 +492,16 @@ export default function App() {
                   <FolderKanban className="w-4 h-4" /> Project Board
                 </button>
               )}
-              <button
-                onClick={() => { setActiveTab('progress'); setIsMobileMenuOpen(false); }}
-                className={`w-full text-left px-4 py-3 text-xs font-bold rounded-xl flex items-center gap-2 ${
-                  activeTab === 'progress' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600'
-                }`}
-              >
-                <TrendingUp className="w-4 h-4" /> Progress Tracking
-              </button>
+              {currentUser.role !== 'client' && (
+                <button
+                  onClick={() => { setActiveTab('progress'); setIsMobileMenuOpen(false); }}
+                  className={`w-full text-left px-4 py-3 text-xs font-bold rounded-xl flex items-center gap-2 ${
+                    activeTab === 'progress' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600'
+                  }`}
+                >
+                  <TrendingUp className="w-4 h-4" /> Progress Tracking
+                </button>
+              )}
               {isUserAdmin && (
                 <>
                   <button
@@ -396,7 +510,7 @@ export default function App() {
                       activeTab === 'employees' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600'
                     }`}
                   >
-                    <Users className="w-4 h-4" /> Employee Directory
+                    <Users className="w-4 h-4" /> Users Directory
                   </button>
                   <button
                     onClick={() => { setActiveTab('projects'); setIsMobileMenuOpen(false); }}
@@ -416,7 +530,7 @@ export default function App() {
                   </button>
                 </>
               )}
-              {(isUserAdmin || currentUser.role === 'employee') && (
+              {(isUserAdmin || (currentUser.role === 'employee' && currentUser.trackAttendance !== false)) && (
                 <button
                   onClick={() => { setActiveTab('attendance'); setIsMobileMenuOpen(false); }}
                   className={`w-full text-left px-4 py-3 text-xs font-bold rounded-xl flex items-center gap-2 ${
@@ -426,6 +540,37 @@ export default function App() {
                   <Calendar className="w-4 h-4" /> Attendance Desk
                 </button>
               )}
+              
+              {/* Change PIN and Sign Out Action Side by Side */}
+              <div className="flex gap-2 border-t border-slate-100 pt-3 mt-2 px-2">
+                <button
+                  onClick={() => {
+                    setChangePasswordError(null);
+                    setChangePasswordSuccess(null);
+                    setCurrentPassword("");
+                    setNewPassword("");
+                    setConfirmPassword("");
+                    setShowChangePasswordModal(true);
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100/80 transition-colors cursor-pointer"
+                  title="Change Login PIN"
+                >
+                  <Key className="w-4 h-4" />
+                  <span>Change PIN</span>
+                </button>
+                <button
+                  onClick={() => {
+                    handleLogout();
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100/80 transition-colors cursor-pointer"
+                  title="Sign Out Session"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Sign Out</span>
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -600,6 +745,72 @@ export default function App() {
                     </button>
                   </div>
                 </form>
+              </motion.div>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* NOTIFICATION DETAIL MODAL */}
+      <AnimatePresence>
+        {selectedNotification && (
+          <div className="fixed inset-0 z-50 overflow-y-auto" id="notification-detail-modal">
+            <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setSelectedNotification(null)}
+                className="fixed inset-0 transition-opacity bg-slate-900/60"
+              />
+              <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                className="relative z-10 inline-block w-full max-w-2xl p-6 my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-2xl rounded-2xl border border-slate-100 sm:align-middle"
+              >
+                <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                      <Bell className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider">{selectedNotification.projectName || "System Updates"}</h3>
+                      <p className="text-[10px] text-slate-400 font-medium">{new Date(selectedNotification.timestamp).toLocaleString()}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSelectedNotification(null)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50 cursor-pointer"
+                  >
+                    <X className="w-4.5 h-4.5" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-sm font-extrabold text-slate-900 font-display">
+                    {selectedNotification.subject}
+                  </h4>
+
+                  {/* Render HTML cleanly within a protected container */}
+                  <div className="border border-slate-100 rounded-xl overflow-hidden bg-slate-50 max-h-[420px] overflow-y-auto p-4 md:p-6" id="notification-html-body">
+                    <div 
+                      dangerouslySetInnerHTML={{ __html: selectedNotification.body }}
+                      className="prose prose-slate prose-xs max-w-none break-words"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-4 border-t border-slate-100 mt-5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedNotification(null)}
+                    className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer"
+                  >
+                    Close Notification
+                  </button>
+                </div>
               </motion.div>
             </div>
           </div>

@@ -840,7 +840,7 @@ app.use(async (req, res, next) => {
   // POST Attendance Punch-Out
   app.post("/api/attendance/punch-out", async (req, res) => {
     try {
-      const { employee_id, date, punch_out, total_hours } = req.body;
+      const { employee_id, date, punch_out, total_hours, notes } = req.body;
       if (!employee_id || !date || !punch_out) {
         return res.status(400).json({ error: "employee_id, date, and punch_out are required." });
       }
@@ -854,10 +854,18 @@ app.use(async (req, res, next) => {
       if (recordData.punch_out) {
         return res.status(400).json({ error: "Already punched out for today." });
       }
-      await docRef.update({
+      
+      const updateData: any = {
         punch_out,
         total_hours: total_hours || ""
-      });
+      };
+      
+      if (notes && notes.trim()) {
+        const existingNotes = recordData.notes || "";
+        updateData.notes = existingNotes ? `${existingNotes} | Out: ${notes.trim()}` : `Out: ${notes.trim()}`;
+      }
+      
+      await docRef.update(updateData);
       res.json({ success: true });
     } catch (err: any) {
       console.error("Error recording punch-out:", err);
@@ -1034,8 +1042,8 @@ app.use(async (req, res, next) => {
   // User changes their own password/PIN
   app.post("/api/auth/change-password", async (req, res) => {
     try {
-      const { email, currentPassword, newPassword } = req.body;
-      const identifier = (email || "").toString().trim();
+      const { email, phone, id, currentPassword, newPassword } = req.body;
+      const identifier = (email || id || phone || "").toString().trim();
       if (!identifier || !newPassword) {
         return res.status(400).json({ error: "Identifier and new PIN are required." });
       }
@@ -1043,30 +1051,60 @@ app.use(async (req, res, next) => {
       let empRef: any = null;
       let employeeData: any = null;
 
-      if (identifier.includes("@")) {
-        const emailNormalized = identifier.toLowerCase();
-        const emailSnap = await db.collection("employees").where("email", "==", emailNormalized).get();
+      // 1. Try to find by id / phone first directly
+      const checkIds: string[] = [];
+      if (id) checkIds.push(id.toString().trim());
+      if (phone) checkIds.push(phone.toString().replace(/[^0-9]/g, ""));
+      if (!identifier.includes("@")) {
+        checkIds.push(identifier.replace(/[^0-9]/g, ""));
+      }
+
+      for (const cid of checkIds) {
+        if (cid) {
+          const directRef = db.collection("employees").doc(cid);
+          const directSnap = await directRef.get();
+          if (directSnap.exists) {
+            empRef = directRef;
+            employeeData = directSnap.data();
+            break;
+          }
+        }
+      }
+
+      // 2. Try to find by email if not found yet
+      if (!employeeData && (identifier.includes("@") || email)) {
+        const searchEmail = (email || identifier).toLowerCase().trim();
+        // Query original and lowercase
+        const emailSnap = await db.collection("employees").where("email", "==", searchEmail).get();
         if (!emailSnap.empty) {
           emailSnap.forEach((doc: any) => {
             empRef = db.collection("employees").doc(doc.id);
             employeeData = doc.data();
           });
+        } else {
+          // Try exact match in case it is case-sensitive and has uppercase letters
+          const originalEmail = (email || identifier).trim();
+          const exactEmailSnap = await db.collection("employees").where("email", "==", originalEmail).get();
+          if (!exactEmailSnap.empty) {
+            exactEmailSnap.forEach((doc: any) => {
+              empRef = db.collection("employees").doc(doc.id);
+              employeeData = doc.data();
+            });
+          }
         }
-      } else {
-        const cleanedPhone = identifier.replace(/[^0-9]/g, "");
-        if (cleanedPhone) {
-          const directRef = db.collection("employees").doc(cleanedPhone);
-          const directSnap = await directRef.get();
-          if (directSnap.exists) {
-            empRef = directRef;
-            employeeData = directSnap.data();
-          } else {
-            const phoneSnap = await db.collection("employees").where("phone", "==", cleanedPhone).get();
+      }
+
+      // 3. Try to query by phone field if still not found
+      if (!employeeData) {
+        for (const cid of checkIds) {
+          if (cid) {
+            const phoneSnap = await db.collection("employees").where("phone", "==", cid).get();
             if (!phoneSnap.empty) {
               phoneSnap.forEach((doc: any) => {
                 empRef = db.collection("employees").doc(doc.id);
                 employeeData = doc.data();
               });
+              break;
             }
           }
         }

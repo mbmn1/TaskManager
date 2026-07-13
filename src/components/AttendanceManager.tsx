@@ -9,7 +9,9 @@ import {
   AlertCircle, 
   Search, 
   Filter,
-  ArrowRightLeft
+  ArrowRightLeft,
+  ArrowLeft,
+  BarChart3
 } from "lucide-react";
 import { Employee } from "../types";
 
@@ -39,12 +41,40 @@ export default function AttendanceManager({ currentUser, employees }: Attendance
 
   // Punch notes/remarks
   const [notesInput, setNotesInput] = useState("");
+  const [outNotesInput, setOutNotesInput] = useState("");
 
   // Filters for Admin
   const [filterEmployee, setFilterEmployee] = useState("");
   const [filterDate, setFilterDate] = useState("");
 
+  // Admin View states
+  const [adminViewMode, setAdminViewMode] = useState<'userReports' | 'table'>('userReports');
+  const [selectedReportEmployeeId, setSelectedReportEmployeeId] = useState<string | null>(null);
+  const [userSearchQuery, setUserSearchQuery] = useState("");
+
   const isAdmin = currentUser.role === "admin";
+
+  // Get metrics for a specific employee
+  const getEmployeeMetrics = (empPhone: string) => {
+    const empLogs = records.filter(r => r.employee_id === empPhone);
+    const totalDays = empLogs.length;
+    let totalHours = 0;
+    empLogs.forEach(r => {
+      if (r.total_hours) {
+        const hrs = parseFloat(r.total_hours.replace(/[^\d.]/g, ''));
+        if (!isNaN(hrs)) {
+          totalHours += hrs;
+        }
+      }
+    });
+    const avgHours = totalDays > 0 ? (totalHours / totalDays) : 0;
+    return {
+      totalDays,
+      totalHours: totalHours.toFixed(1),
+      avgHours: avgHours.toFixed(1),
+      logs: empLogs
+    };
+  };
 
   // Get formatted date string YYYY-MM-DD
   const getTodayDateString = () => {
@@ -173,13 +203,15 @@ export default function AttendanceManager({ currentUser, employees }: Attendance
           employee_id: currentUser.phone,
           date: todayStr,
           punch_out: timeStr,
-          total_hours: totalHoursStr
+          total_hours: totalHoursStr,
+          notes: outNotesInput
         })
       });
 
       const data = await res.json();
       if (res.ok) {
         setSuccess(`Punched out successfully at ${timeStr}. Total: ${totalHoursStr}`);
+        setOutNotesInput("");
         await fetchRecords();
       } else {
         setError(data.error || "Failed to punch out.");
@@ -220,220 +252,450 @@ export default function AttendanceManager({ currentUser, employees }: Attendance
         </div>
       )}
 
-      {/* Main Grid: Employee Control Panel or Admin View */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Punch controls for employees whose attendance tracking is enabled */}
-        {!isAdmin && (
-          <div className="lg:col-span-1 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
-            <div className="flex items-center gap-2.5 pb-4 border-b border-slate-100">
-              <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
-                <Clock className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-extrabold text-slate-900 font-display">Attendance Desk</h3>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Punch In & Punch Out</p>
-              </div>
-            </div>
 
-            {/* Attendance tracking toggle warning */}
-            {currentUser.trackAttendance === false ? (
-              <div className="bg-amber-50 text-amber-800 p-3 rounded-xl text-xs font-semibold border border-amber-200">
-                Attendance tracking is not required/enabled for your profile by the Administrator.
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-center space-y-1">
-                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block">Today's Date</span>
-                  <span className="text-sm font-extrabold text-slate-800 font-mono block">{getTodayDateString()}</span>
-                  
-                  {todayRecord ? (
-                    <div className="pt-3 mt-3 border-t border-slate-200/60 grid grid-cols-2 gap-2 text-left">
-                      <div>
-                        <span className="text-[9px] text-slate-400 font-bold block uppercase">PUNCH IN</span>
-                        <span className="text-xs font-bold text-emerald-600 font-mono">{todayRecord.punch_in}</span>
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-slate-400 font-bold block uppercase">PUNCH OUT</span>
-                        <span className="text-xs font-bold text-slate-600 font-mono">{todayRecord.punch_out || "Active Session"}</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-slate-500 font-medium block pt-2">You haven't logged time for today yet.</span>
-                  )}
-                </div>
+      {/* Admin View Mode Toggles */}
+      {isAdmin && (
+        <div className="flex border-b border-slate-200 gap-1 mb-4" id="admin-attendance-tabs">
+          <button
+            onClick={() => { setAdminViewMode('userReports'); setSelectedReportEmployeeId(null); }}
+            className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center gap-2 cursor-pointer ${
+              adminViewMode === 'userReports'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <User className="w-4 h-4" />
+            User-by-User Reports
+          </button>
+          <button
+            onClick={() => setAdminViewMode('table')}
+            className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center gap-2 cursor-pointer ${
+              adminViewMode === 'table'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            Master Logs Matrix
+          </button>
+        </div>
+      )}
 
-                {!todayRecord ? (
-                  /* Punch In Form */
-                  <form onSubmit={handlePunchIn} className="space-y-4">
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
-                        Remarks / Notes (Optional)
-                      </label>
-                      <textarea
-                        rows={2}
-                        placeholder="Work from home, site visit, early shift notes..."
-                        value={notesInput}
-                        onChange={(e) => setNotesInput(e.target.value)}
-                        className="w-full p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 text-xs text-slate-800"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                    >
-                      <MapPin className="w-4 h-4" /> Punch In Shift
-                    </button>
-                  </form>
-                ) : !todayRecord.punch_out ? (
-                  /* Punch Out Action */
-                  <div className="space-y-3">
-                    <button
-                      type="button"
-                      onClick={handlePunchOut}
-                      disabled={loading}
-                      className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                    >
-                      <Clock className="w-4 h-4" /> Punch Out Shift
-                    </button>
-                    <p className="text-[10px] text-slate-400 text-center font-semibold">
-                      This will close today's workspace log session and calculate active duration.
-                    </p>
+      {/* Admin User-by-User Attendance Reports View */}
+      {isAdmin && adminViewMode === 'userReports' && (
+        <div className="space-y-6 animate-fade-in" id="admin-user-reports-view">
+          {selectedReportEmployeeId === null ? (
+            /* List of Users Grid */
+            <div className="space-y-4">
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                    <User className="w-5 h-5" />
                   </div>
-                ) : (
-                  /* Completed Today */
-                  <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl text-center space-y-1.5">
-                    <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto" />
-                    <span className="text-xs font-bold text-emerald-800 block">Workspace Log Completed</span>
-                    <span className="text-[10px] text-emerald-600 font-semibold block">
-                      Total logged time: {todayRecord.total_hours}
-                    </span>
+                  <div>
+                    <h3 className="text-sm font-extrabold text-slate-900 font-display">User Attendance Reports</h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Select a user to analyze attendance logs and metrics</p>
+                  </div>
+                </div>
+                
+                {/* Search Bar */}
+                <div className="relative w-full md:w-80">
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search users by name or role..."
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 text-xs font-medium text-slate-700 placeholder-slate-400"
+                  />
+                </div>
+              </div>
+
+              {/* Grid of Users */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {employees
+                  .filter(emp => emp.role === "employee" && emp.trackAttendance !== false)
+                  .filter(emp => {
+                    const query = userSearchQuery.toLowerCase().trim();
+                    return !query || emp.name.toLowerCase().includes(query) || emp.designation.toLowerCase().includes(query);
+                  })
+                  .map(emp => {
+                    const metrics = getEmployeeMetrics(emp.phone);
+                    return (
+                      <div key={emp.phone} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-4 hover:border-indigo-300 transition-all">
+                        <div>
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className="w-10 h-10 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center font-bold text-indigo-700 text-sm">
+                              {emp.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)}
+                            </div>
+                            <div>
+                              <h4 className="font-extrabold text-sm text-slate-800 font-display">{emp.name}</h4>
+                              <p className="text-[10px] text-slate-400 font-semibold">{emp.designation}</p>
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-xl text-center">
+                            <div>
+                              <span className="text-[9px] text-slate-400 font-bold block uppercase">Days Logged</span>
+                              <span className="text-xs font-bold text-slate-800 font-mono">{metrics.totalDays}</span>
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-slate-400 font-bold block uppercase">Total Hours</span>
+                              <span className="text-xs font-bold text-slate-800 font-mono">{metrics.totalHours} hrs</span>
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-slate-400 font-bold block uppercase">Avg Hours</span>
+                              <span className="text-xs font-bold text-slate-800 font-mono">{metrics.avgHours} hrs</span>
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setSelectedReportEmployeeId(emp.phone)}
+                          className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-600 text-indigo-600 hover:text-white rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <BarChart3 className="w-3.5 h-3.5" />
+                          View Detailed Report
+                        </button>
+                      </div>
+                    );
+                  })
+                }
+
+                {employees.filter(emp => emp.role === "employee" && emp.trackAttendance !== false).length === 0 && (
+                  <div className="col-span-full bg-white p-12 text-center text-slate-400 rounded-2xl border border-slate-200">
+                    <Clock className="w-8 h-8 mx-auto mb-2 animate-pulse" />
+                    <p className="text-xs font-semibold">No employees are configured for attendance tracking.</p>
                   </div>
                 )}
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          ) : (
+            /* Detailed Report View for a Single Selected Employee */
+            (() => {
+              const selectedEmp = employees.find(e => e.phone === selectedReportEmployeeId);
+              if (!selectedEmp) return null;
+              const metrics = getEmployeeMetrics(selectedEmp.phone);
+              return (
+                <div className="space-y-6">
+                  {/* Top Back Action Bar */}
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={() => setSelectedReportEmployeeId(null)}
+                      className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
+                    >
+                      <ArrowLeft className="w-4 h-4" /> Back to All Reports
+                    </button>
+                    <span className="text-[10px] text-slate-400 font-mono">User ID: {selectedEmp.phone}</span>
+                  </div>
 
-        {/* Attendance log search/filters for Admin */}
-        {isAdmin && (
-          <div className="lg:col-span-3 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
-                <Calendar className="w-5 h-5" />
+                  {/* Employee Header Info */}
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-full bg-indigo-50 border-2 border-indigo-100 flex items-center justify-center font-bold text-indigo-700 text-lg">
+                      {selectedEmp.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)}
+                    </div>
+                    <div>
+                      <h3 className="text-base font-extrabold text-slate-900 font-display">{selectedEmp.name}</h3>
+                      <p className="text-xs text-slate-500 font-semibold">{selectedEmp.designation} &bull; {selectedEmp.email}</p>
+                    </div>
+                  </div>
+
+                  {/* Metrics Cards row */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Total Present Days</span>
+                      <span className="text-2xl font-extrabold text-slate-800 font-mono block">{metrics.totalDays}</span>
+                    </div>
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Total Work Hours</span>
+                      <span className="text-2xl font-extrabold text-emerald-600 font-mono block">{metrics.totalHours} hrs</span>
+                    </div>
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Avg Daily Shift</span>
+                      <span className="text-2xl font-extrabold text-indigo-600 font-mono block">{metrics.avgHours} hrs</span>
+                    </div>
+                  </div>
+
+                  {/* Detailed Log Table for Selected User */}
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 pb-2 border-b border-slate-100">
+                      Attendance Log History for {selectedEmp.name}
+                    </h4>
+                    <div className="overflow-x-auto">
+                      {metrics.logs.length === 0 ? (
+                        <div className="text-center py-12 text-slate-400">
+                          <Clock className="w-8 h-8 mx-auto text-slate-300 mb-2" />
+                          <p className="text-xs font-semibold">No attendance history records found for this user.</p>
+                        </div>
+                      ) : (
+                        <table className="min-w-full divide-y divide-slate-100 text-left">
+                          <thead>
+                            <tr className="text-[10px] font-bold text-slate-400 uppercase">
+                              <th className="py-3 px-2">Date</th>
+                              <th className="py-3 px-3">Punch In</th>
+                              <th className="py-3 px-3">Punch Out</th>
+                              <th className="py-3 px-3">Duration</th>
+                              <th className="py-3 px-3">Remarks / Notes</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 text-xs text-slate-700 font-medium">
+                            {metrics.logs.map((rec) => (
+                              <tr key={rec.id} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="py-3 px-2 font-mono font-bold text-slate-800">{rec.date}</td>
+                                <td className="py-3 px-3 font-mono text-emerald-600 font-bold">{rec.punch_in || "-"}</td>
+                                <td className="py-3 px-3 font-mono text-slate-600 font-bold">
+                                  {rec.punch_out || <span className="text-[10px] text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded-md">In Shift</span>}
+                                </td>
+                                <td className="py-3 px-3">
+                                  {rec.total_hours ? (
+                                    <span className="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded font-mono">
+                                      {rec.total_hours}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">-</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-3 text-slate-500 italic max-w-xs truncate" title={rec.notes}>
+                                  {rec.notes || <span className="text-slate-300">No notes</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()
+          )}
+        </div>
+      )}
+
+      {/* Legacy / Master Matrix Table & Standard Employee Desk */}
+      {(!isAdmin || adminViewMode === 'table') && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          {/* Punch controls for employees whose attendance tracking is enabled */}
+          {!isAdmin && (
+            <div className="lg:col-span-1 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+              <div className="flex items-center gap-2.5 pb-4 border-b border-slate-100">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900 font-display">Attendance Desk</h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Punch In & Punch Out</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-sm font-extrabold text-slate-900 font-display">Attendance Matrix Manager</h3>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Track clock times across full teams</p>
+
+              {/* Attendance tracking toggle warning */}
+              {currentUser.trackAttendance === false ? (
+                <div className="bg-amber-50 text-amber-800 p-3 rounded-xl text-xs font-semibold border border-amber-200">
+                  Attendance tracking is not required/enabled for your profile by the Administrator.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-center space-y-1">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block">Today's Date</span>
+                    <span className="text-sm font-extrabold text-slate-800 font-mono block">{getTodayDateString()}</span>
+                    
+                    {todayRecord ? (
+                      <div className="pt-3 mt-3 border-t border-slate-200/60 grid grid-cols-2 gap-2 text-left">
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-bold block uppercase">PUNCH IN</span>
+                          <span className="text-xs font-bold text-emerald-600 font-mono">{todayRecord.punch_in}</span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-slate-400 font-bold block uppercase">PUNCH OUT</span>
+                          <span className="text-xs font-bold text-slate-600 font-mono">{todayRecord.punch_out || "Active Session"}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-500 font-medium block pt-2">You haven't logged time for today yet.</span>
+                    )}
+                  </div>
+
+                  {!todayRecord ? (
+                    /* Punch In Form */
+                    <form onSubmit={handlePunchIn} className="space-y-4">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                          Remarks / Notes (Optional)
+                        </label>
+                        <textarea
+                          rows={2}
+                          placeholder="Work from home, site visit, early shift notes..."
+                          value={notesInput}
+                          onChange={(e) => setNotesInput(e.target.value)}
+                          className="w-full p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 text-xs text-slate-800"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        <MapPin className="w-4 h-4" /> Punch In Shift
+                      </button>
+                    </form>
+                  ) : !todayRecord.punch_out ? (
+                    /* Punch Out Action */
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                          Outward Remarks / Notes (Optional)
+                        </label>
+                        <textarea
+                          rows={2}
+                          placeholder="Tasks completed, handovers, shift end notes..."
+                          value={outNotesInput}
+                          onChange={(e) => setOutNotesInput(e.target.value)}
+                          className="w-full p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 text-xs text-slate-800"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handlePunchOut}
+                        disabled={loading}
+                        className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        <Clock className="w-4 h-4" /> Punch Out Shift
+                      </button>
+                      <p className="text-[10px] text-slate-400 text-center font-semibold">
+                        This will close today's workspace log session and calculate active duration.
+                      </p>
+                    </div>
+                  ) : (
+                    /* Completed Today */
+                    <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl text-center space-y-1.5">
+                      <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto" />
+                      <span className="text-xs font-bold text-emerald-800 block">Workspace Log Completed</span>
+                      <span className="text-[10px] text-emerald-600 font-semibold block">
+                        Total logged time: {todayRecord.total_hours}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Attendance log search/filters for Admin */}
+          {isAdmin && (
+            <div className="lg:col-span-3 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900 font-display">Attendance Matrix Manager</h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Track clock times across full teams</p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                {/* Employee Filter Dropdown */}
+                <div className="flex-1 min-w-[160px] md:flex-none">
+                  <select
+                    value={filterEmployee}
+                    onChange={(e) => setFilterEmployee(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 text-xs font-semibold text-slate-700"
+                  >
+                    <option value="">All Employees</option>
+                    {employees
+                      .filter(emp => emp.role === "employee")
+                      .map(emp => (
+                        <option key={emp.phone} value={emp.phone}>{emp.name}</option>
+                      ))
+                    }
+                  </select>
+                </div>
+
+                {/* Date Filter Input */}
+                <div className="flex-1 min-w-[140px] md:flex-none">
+                  <input
+                    type="date"
+                    value={filterDate}
+                    onChange={(e) => setFilterDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 text-xs font-semibold text-slate-700"
+                  />
+                </div>
+
+                {/* Clear Filter button */}
+                {(filterEmployee || filterDate) && (
+                  <button
+                    onClick={() => { setFilterEmployee(""); setFilterDate(""); }}
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                  >
+                    Clear Filters
+                  </button>
+                )}
               </div>
             </div>
+          )}
 
-            <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-              {/* Employee Filter Dropdown */}
-              <div className="flex-1 min-w-[160px] md:flex-none">
-                <select
-                  value={filterEmployee}
-                  onChange={(e) => setFilterEmployee(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 text-xs font-semibold text-slate-700"
-                >
-                  <option value="">All Employees</option>
-                  {employees
-                    .filter(emp => emp.role === "employee")
-                    .map(emp => (
-                      <option key={emp.phone} value={emp.phone}>{emp.name}</option>
-                    ))
-                  }
-                </select>
-              </div>
+          {/* History Table logs */}
+          <div className={`${isAdmin ? 'lg:col-span-3' : 'lg:col-span-2'} bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4`}>
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                {isAdmin ? `All Work logs (${filteredRecords.length})` : "My Attendance History"}
+              </h4>
+            </div>
 
-              {/* Date Filter Input */}
-              <div className="flex-1 min-w-[140px] md:flex-none">
-                <input
-                  type="date"
-                  value={filterDate}
-                  onChange={(e) => setFilterDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 text-xs font-semibold text-slate-700"
-                />
-              </div>
-
-              {/* Clear Filter button */}
-              {(filterEmployee || filterDate) && (
-                <button
-                  onClick={() => { setFilterEmployee(""); setFilterDate(""); }}
-                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl transition-all cursor-pointer"
-                >
-                  Clear Filters
-                </button>
+            <div className="overflow-x-auto">
+              {filteredRecords.length === 0 ? (
+                <div className="text-center py-12 text-slate-400">
+                  <Clock className="w-8 h-8 mx-auto text-slate-300 mb-2 animate-pulse" />
+                  <p className="text-xs font-semibold">No attendance logs found in database.</p>
+                </div>
+              ) : (
+                <table className="min-w-full divide-y divide-slate-100 text-left">
+                  <thead>
+                    <tr className="text-[10px] font-bold text-slate-400 uppercase">
+                      <th className="py-3 px-2">Date</th>
+                      {isAdmin && <th className="py-3 px-3">Employee</th>}
+                      <th className="py-3 px-3">In</th>
+                      <th className="py-3 px-3">Out</th>
+                      <th className="py-3 px-3">Duration</th>
+                      <th className="py-3 px-3">Remarks / Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs text-slate-700 font-medium">
+                    {filteredRecords.map((rec) => (
+                      <tr key={rec.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="py-3 px-2 font-mono font-bold text-slate-800">{rec.date}</td>
+                        {isAdmin && (
+                          <td className="py-3 px-3">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                              <span className="font-semibold text-slate-900">{rec.employee_name}</span>
+                            </div>
+                          </td>
+                        )}
+                        <td className="py-3 px-3 font-mono text-emerald-600 font-bold">{rec.punch_in || "-"}</td>
+                        <td className="py-3 px-3 font-mono text-slate-600 font-bold">{rec.punch_out || <span className="text-[10px] text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded-md">In Shift</span>}</td>
+                        <td className="py-3 px-3">
+                          {rec.total_hours ? (
+                            <span className="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded font-mono">
+                              {rec.total_hours}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-slate-500 italic max-w-xs truncate" title={rec.notes}>
+                          {rec.notes || <span className="text-slate-300">No notes</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>
-        )}
 
-        {/* History Table logs */}
-        <div className={`${isAdmin ? 'lg:col-span-3' : 'lg:col-span-2'} bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4`}>
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              {isAdmin ? `All Work logs (${filteredRecords.length})` : "My Attendance History"}
-            </h4>
-            <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded-full font-mono">
-              Database Sync Active
-            </span>
-          </div>
-
-          <div className="overflow-x-auto">
-            {filteredRecords.length === 0 ? (
-              <div className="text-center py-12 text-slate-400">
-                <Clock className="w-8 h-8 mx-auto text-slate-300 mb-2 animate-pulse" />
-                <p className="text-xs font-semibold">No attendance logs found in database.</p>
-              </div>
-            ) : (
-              <table className="min-w-full divide-y divide-slate-100 text-left">
-                <thead>
-                  <tr className="text-[10px] font-bold text-slate-400 uppercase">
-                    <th className="py-3 px-2">Date</th>
-                    {isAdmin && <th className="py-3 px-3">Employee</th>}
-                    <th className="py-3 px-3">In</th>
-                    <th className="py-3 px-3">Out</th>
-                    <th className="py-3 px-3">Duration</th>
-                    <th className="py-3 px-3">Remarks / Notes</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs text-slate-700 font-medium">
-                  {filteredRecords.map((rec) => (
-                    <tr key={rec.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="py-3 px-2 font-mono font-bold text-slate-800">{rec.date}</td>
-                      {isAdmin && (
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                            <span className="font-semibold text-slate-900">{rec.employee_name}</span>
-                          </div>
-                        </td>
-                      )}
-                      <td className="py-3 px-3 font-mono text-emerald-600 font-bold">{rec.punch_in || "-"}</td>
-                      <td className="py-3 px-3 font-mono text-slate-600 font-bold">{rec.punch_out || <span className="text-[10px] text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded-md">In Shift</span>}</td>
-                      <td className="py-3 px-3">
-                        {rec.total_hours ? (
-                          <span className="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded font-mono">
-                            {rec.total_hours}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">-</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-slate-500 italic max-w-xs truncate" title={rec.notes}>
-                        {rec.notes || <span className="text-slate-300">No notes</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
         </div>
-
-      </div>
+      )}
     </div>
   );
 }

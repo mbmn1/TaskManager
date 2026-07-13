@@ -67,7 +67,9 @@ export default function ProjectBoard({ currentUser, employees, projects }: Proje
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
-  const [activeBoardTab, setActiveBoardTab] = useState<'assigned' | 'in progress' | 'completed' | 'tracker'>('assigned');
+  const [activeBoardTab, setActiveBoardTab] = useState<'assigned' | 'in progress' | 'completed' | 'tracker'>(
+    currentUser.role === 'client' ? 'tracker' : 'assigned'
+  );
 
   // New task form modal state
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -325,56 +327,60 @@ export default function ProjectBoard({ currentUser, employees, projects }: Proje
 
           {/* Kanban / Tasks Board with Tabs for better UX */}
           <div className="flex border-b border-slate-200 mb-6 gap-2 overflow-x-auto pb-px" id="board-tabs-bar">
-            <button
-              onClick={() => setActiveBoardTab('assigned')}
-              className={`pb-3 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 flex items-center gap-2 ${
-                activeBoardTab === 'assigned'
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <Clock className="w-4 h-4 text-blue-500" />
-              <span>Assigned Tasks</span>
-              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                activeBoardTab === 'assigned' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'
-              }`}>
-                {tasksAssigned.length}
-              </span>
-            </button>
+            {currentUser.role !== 'client' && (
+              <>
+                <button
+                  onClick={() => setActiveBoardTab('assigned')}
+                  className={`pb-3 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 flex items-center gap-2 ${
+                    activeBoardTab === 'assigned'
+                      ? 'border-indigo-600 text-indigo-600'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <Clock className="w-4 h-4 text-blue-500" />
+                  <span>Assigned Tasks</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    activeBoardTab === 'assigned' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'
+                  }`}>
+                    {tasksAssigned.length}
+                  </span>
+                </button>
 
-            <button
-              onClick={() => setActiveBoardTab('in progress')}
-              className={`pb-3 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 flex items-center gap-2 ${
-                activeBoardTab === 'in progress'
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <Clock className="w-4 h-4 text-amber-500 animate-pulse" />
-              <span>In Progress</span>
-              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                activeBoardTab === 'in progress' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'
-              }`}>
-                {tasksInProgress.length}
-              </span>
-            </button>
+                <button
+                  onClick={() => setActiveBoardTab('in progress')}
+                  className={`pb-3 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 flex items-center gap-2 ${
+                    activeBoardTab === 'in progress'
+                      ? 'border-indigo-600 text-indigo-600'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <Clock className="w-4 h-4 text-amber-500 animate-pulse" />
+                  <span>In Progress</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    activeBoardTab === 'in progress' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'
+                  }`}>
+                    {tasksInProgress.length}
+                  </span>
+                </button>
 
-            <button
-              onClick={() => setActiveBoardTab('completed')}
-              className={`pb-3 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 flex items-center gap-2 ${
-                activeBoardTab === 'completed'
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <CheckCircle className="w-4 h-4 text-emerald-500" />
-              <span>Completed</span>
-              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                activeBoardTab === 'completed' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'
-              }`}>
-                {tasksCompleted.length}
-              </span>
-            </button>
+                <button
+                  onClick={() => setActiveBoardTab('completed')}
+                  className={`pb-3 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-all shrink-0 flex items-center gap-2 ${
+                    activeBoardTab === 'completed'
+                      ? 'border-indigo-600 text-indigo-600'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <CheckCircle className="w-4 h-4 text-emerald-500" />
+                  <span>Completed</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    activeBoardTab === 'completed' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'
+                  }`}>
+                    {tasksCompleted.length}
+                  </span>
+                </button>
+              </>
+            )}
 
             <button
               onClick={() => setActiveBoardTab('tracker')}
@@ -385,11 +391,11 @@ export default function ProjectBoard({ currentUser, employees, projects }: Proje
               }`}
             >
               <Users className="w-4 h-4 text-purple-500" />
-              <span>Sent Tasks Tracker</span>
+              <span>{currentUser.role === 'client' ? 'My Added Tasks Tracker' : 'Sent Tasks Tracker'}</span>
               <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                 activeBoardTab === 'tracker' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'
               }`}>
-                {userTasks.filter(t => t.assignedBy === currentUser.phone).length}
+                {userTasks.filter(t => t.assignedBy === currentUser.phone || t.assignedBy === currentUser.email).length}
               </span>
             </button>
           </div>

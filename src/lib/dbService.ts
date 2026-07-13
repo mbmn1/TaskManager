@@ -32,7 +32,7 @@ export const subscribeEmployees = (callback: (employees: Employee[]) => void) =>
   };
 
   fetchEmployees();
-  const interval = setInterval(fetchEmployees, 4000);
+  const interval = setInterval(fetchEmployees, 3000);
   return () => clearInterval(interval);
 };
 
@@ -61,7 +61,7 @@ export const subscribeProjects = (userEmail: string, userRole: 'admin' | 'employ
   };
 
   fetchProjects();
-  const interval = setInterval(fetchProjects, 4000);
+  const interval = setInterval(fetchProjects, 3000);
   return () => clearInterval(interval);
 };
 
@@ -147,7 +147,7 @@ export const subscribeTasks = (projectId: string, userEmail: string, userPhone: 
   };
 
   fetchTasks();
-  const interval = setInterval(fetchTasks, 4000);
+  const interval = setInterval(fetchTasks, 3000);
   return () => clearInterval(interval);
 };
 
@@ -166,7 +166,7 @@ export const subscribeAllTasks = (userEmail: string, userPhone: string, userRole
   };
 
   fetchAllTasks();
-  const interval = setInterval(fetchAllTasks, 4000);
+  const interval = setInterval(fetchAllTasks, 3000);
   return () => clearInterval(interval);
 };
 
@@ -332,7 +332,7 @@ export const subscribeNotifications = (callback: (notifications: EmailNotificati
   };
 
   fetchNotifications();
-  const interval = setInterval(fetchNotifications, 4000);
+  const interval = setInterval(fetchNotifications, 3000);
   return () => clearInterval(interval);
 };
 
@@ -351,6 +351,6 @@ export const subscribeAuditLogs = (callback: (logs: AuditLog[]) => void) => {
   };
 
   fetchLogs();
-  const interval = setInterval(fetchLogs, 4000);
+  const interval = setInterval(fetchLogs, 3000);
   return () => clearInterval(interval);
 };

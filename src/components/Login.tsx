@@ -154,46 +154,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             </div>
           </form>
 
-          {/* Administrator Guide Link */}
-          <div className="mt-6 pt-4 border-t border-slate-100 text-center">
-            <button
-              type="button"
-              onClick={() => setShowAdminGuide(!showAdminGuide)}
-              className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors inline-flex items-center gap-1.5 cursor-pointer"
-            >
-              <UserCheck className="w-3.5 h-3.5" />
-              {showAdminGuide ? "Hide Administrator Guide" : "Guide: How to Login as Administrator?"}
-            </button>
-            
-            {showAdminGuide && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                className="mt-3 text-left bg-slate-50 border border-slate-200/50 p-3.5 rounded-xl text-[11px] text-slate-600 space-y-2 leading-relaxed"
-              >
-                <p className="font-bold text-slate-800 text-xs flex items-center gap-1.5 border-b border-slate-150 pb-1.5 mb-1.5">
-                  🔑 Administrator Login Credentials
-                </p>
-                <p>
-                  To login as an Administrator (e.g. Admin) with full administrative rights over the Innovalley Workspace, use the following credentials:
-                </p>
-                <div className="grid grid-cols-2 gap-2.5 bg-white border border-slate-100 p-2.5 rounded-lg font-mono text-[10px]">
-                  <div>
-                    <span className="text-slate-400 block text-[9px] uppercase font-bold mb-0.5">Mobile Number</span>
-                    <strong className="text-indigo-600 font-extrabold text-xs">9848884897</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block text-[9px] uppercase font-bold mb-0.5">6-Digit PIN</span>
-                    <strong className="text-indigo-600 font-extrabold text-xs">123456</strong>
-                  </div>
-                </div>
-                <p className="text-[10px] text-slate-500 italic mt-1.5 leading-relaxed">
-                  * Note: Once logged in, you can add or manage other employees, create projects, assign tasks, track attendance logs, and update your own credentials securely by clicking the Key icon next to your name.
-                </p>
-              </motion.div>
-            )}
-          </div>
-
 
         </div>
       </div>

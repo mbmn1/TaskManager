@@ -43,7 +43,7 @@ export default function ProgressTracker({ currentUser, employees, projects }: Pr
 
   // Calculate individual member metrics for real-time employee task loading
   const memberMetrics: MemberMetric[] = employees
-    .filter(emp => emp.role !== "admin")
+    .filter(emp => emp.role !== "admin" && emp.role !== "client")
     .filter(emp => {
       if (isUserAdmin) return true;
       const empEmailNorm = (emp.email || "").toLowerCase().trim();
