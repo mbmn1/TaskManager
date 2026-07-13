@@ -236,7 +236,7 @@ async function runSupabaseMigrations() {
     const adminCount = parseInt(adminCheck.rows[0].count, 10);
     if (adminCount === 0) {
       console.log("No administrator accounts found in Supabase. Seeding default Admin user...");
-      const adminId = toUUID('9848884897');
+      const adminId = '9848884897';
       await client.query(`
         INSERT INTO employees (id, name, email, phone, designation, role, password, "trackAttendance")
         VALUES ($1, 'Admin', 'Innovalleyservices@gmail.com', '9848884897', 'Administrator', 'admin', '123456', false);
@@ -394,7 +394,7 @@ class DBWrapper {
     return {
       doc(docId?: string) {
         const rawId = docId || Math.random().toString(36).substring(2, 15);
-        const id = (name === "employees") ? toUUID(rawId) : rawId;
+        const id = rawId;
         return {
           id: rawId,
           async get() {
