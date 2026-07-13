@@ -68,11 +68,15 @@ async function runSupabaseMigrations() {
     // to perform a clean text-primary-key reset so that non-UUID primary keys work.
     await client.query(`
       DO $$
+      DECLARE
+        col_type text;
       BEGIN
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns 
-          WHERE table_name = 'employees' AND column_name = 'id' AND data_type = 'uuid'
-        ) THEN
+        SELECT data_type INTO col_type 
+        FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'employees' AND column_name = 'id';
+        
+        -- If the table exists and the ID column is NOT a text/varchar type, drop everything to rebuild.
+        IF col_type IS NOT NULL AND col_type <> 'text' AND col_type <> 'character varying' THEN
           DROP TABLE IF EXISTS attendance CASCADE;
           DROP TABLE IF EXISTS logs CASCADE;
           DROP TABLE IF EXISTS notifications CASCADE;
