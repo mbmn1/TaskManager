@@ -23,7 +23,7 @@ export default function ProgressTracker({ currentUser, employees, projects }: Pr
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = subscribeAllTasks(currentUser.email || "", currentUser.phone || "", currentUser.role, (tasks) => {
+    const unsubscribe = subscribeAllTasks(currentUser.email || "", currentUser.role, (tasks) => {
       setAllTasks(tasks);
       setLoading(false);
     });

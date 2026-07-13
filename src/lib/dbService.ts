@@ -1,25 +1,27 @@
 import { Employee, Project, Task, EmailNotification, AuditLog, TaskAttachment } from "../types";
-import { supabase } from "./supabaseClient";
 
-// Helper to get current Supabase session token
-const getAuthToken = async (): Promise<string | null> => {
-  const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token || null;
+// Seed Admin user
+export const seedAdminUser = async () => {
+  try {
+    const res = await fetch("/api/employees/seed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Server returned status ${res.status}: ${text}`);
+    }
+    return await res.json();
+  } catch (error) {
+    console.error("Error seeding admin user:", error);
+  }
 };
 
-// authFetch: Automatically attach Supabase JWT to all API requests
-const authFetch = async (url: string, options: RequestInit = {}) => {
-  const token = await getAuthToken();
-  const headers = new Headers(options.headers || {});
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(url, { ...options, headers });
-};
-
-// Subscribe to all employees with polling
+// Listen to all employees
 export const subscribeEmployees = (callback: (employees: Employee[]) => void) => {
   const fetchEmployees = async () => {
     try {
-      const res = await authFetch("/api/employees");
+      const res = await fetch("/api/employees");
       if (res.ok) {
         const data = await res.json();
         callback(data);
@@ -35,8 +37,8 @@ export const subscribeEmployees = (callback: (employees: Employee[]) => void) =>
 };
 
 // Add new employee (Admin action)
-export const addEmployee = async (employee: Omit<Employee, 'id' | 'role'>) => {
-  const res = await authFetch("/api/employees", {
+export const addEmployee = async (employee: Omit<Employee, 'id'>) => {
+  const res = await fetch("/api/employees", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(employee)
@@ -44,11 +46,11 @@ export const addEmployee = async (employee: Omit<Employee, 'id' | 'role'>) => {
   return await res.json();
 };
 
-// Subscribe to projects with polling
-export const subscribeProjects = (userEmail: string, userRole: 'admin' | 'employee', callback: (projects: Project[]) => void) => {
+// Listen to projects current user is a member of (or created)
+export const subscribeProjects = (userEmail: string, userRole: 'admin' | 'employee' | 'client', callback: (projects: Project[]) => void) => {
   const fetchProjects = async () => {
     try {
-      const res = await authFetch(`/api/projects?userEmail=${encodeURIComponent(userEmail)}&role=${userRole}`);
+      const res = await fetch(`/api/projects?userEmail=${encodeURIComponent(userEmail)}&role=${userRole}`);
       if (res.ok) {
         const data = await res.json();
         callback(data);
@@ -65,7 +67,7 @@ export const subscribeProjects = (userEmail: string, userRole: 'admin' | 'employ
 
 // Create a project (Admin action)
 export const createProject = async (name: string, description: string, createdBy: string, members: string[]) => {
-  const res = await authFetch("/api/projects", {
+  const res = await fetch("/api/projects", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, description, createdBy, members })
@@ -75,7 +77,7 @@ export const createProject = async (name: string, description: string, createdBy
 
 // Update project members
 export const updateProjectMembers = async (projectId: string, members: string[]) => {
-  const res = await authFetch(`/api/projects/${projectId}/members`, {
+  const res = await fetch(`/api/projects/${projectId}/members`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ members })
@@ -83,27 +85,58 @@ export const updateProjectMembers = async (projectId: string, members: string[])
   return await res.json();
 };
 
-// Update a project
-export const updateProject = async (projectId: string, updates: Partial<Project>) => {
-  const res = await authFetch(`/api/projects/${projectId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(updates)
+// Delete employee (Admin action)
+export const deleteEmployee = async (email: string) => {
+  const res = await fetch(`/api/employees/${encodeURIComponent(email)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" }
   });
   return await res.json();
 };
 
-// Delete a project
+// Delete project (Admin action)
 export const deleteProject = async (projectId: string) => {
-  const res = await authFetch(`/api/projects/${projectId}`, { method: "DELETE" });
+  const res = await fetch(`/api/projects/${projectId}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" }
+  });
   return await res.json();
 };
 
-// Subscribe to tasks for a user
-export const subscribeTasks = (userEmail: string, userPhone: string, callback: (tasks: Task[]) => void) => {
+// Delete completed tasks project-wise (Admin action)
+export const deleteCompletedTasks = async (projectId: string) => {
+  const res = await fetch(`/api/projects/${projectId}/tasks/completed`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" }
+  });
+  return await res.json();
+};
+
+// Update employee details (Admin action)
+export const updateEmployee = async (phone: string, employee: Partial<Omit<Employee, 'id' | 'phone'>>) => {
+  const res = await fetch(`/api/employees/${encodeURIComponent(phone)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(employee)
+  });
+  return await res.json();
+};
+
+// Update project details (Admin action)
+export const updateProject = async (projectId: string, project: { name?: string, description?: string, members?: string[] }) => {
+  const res = await fetch(`/api/projects/${projectId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(project)
+  });
+  return await res.json();
+};
+
+// Listen to tasks for a specific project
+export const subscribeTasks = (projectId: string, userEmail: string, userRole: string, callback: (tasks: Task[]) => void) => {
   const fetchTasks = async () => {
     try {
-      const res = await authFetch(`/api/tasks?userEmail=${encodeURIComponent(userEmail)}&userPhone=${encodeURIComponent(userPhone)}`);
+      const res = await fetch(`/api/tasks?projectId=${projectId}&userEmail=${encodeURIComponent(userEmail)}&role=${userRole}`);
       if (res.ok) {
         const data = await res.json();
         callback(data);
@@ -118,11 +151,11 @@ export const subscribeTasks = (userEmail: string, userPhone: string, callback: (
   return () => clearInterval(interval);
 };
 
-// Subscribe to all tasks (Admin)
-export const subscribeAllTasks = (userEmail: string, userPhone: string, userRole: string, callback: (tasks: Task[]) => void) => {
+// Subscribe to all tasks (for general statistics and tracking)
+export const subscribeAllTasks = (userEmail: string, userRole: string, callback: (tasks: Task[]) => void) => {
   const fetchAllTasks = async () => {
     try {
-      const res = await authFetch(`/api/tasks?userEmail=${encodeURIComponent(userEmail)}&userPhone=${encodeURIComponent(userPhone)}&role=${userRole}`);
+      const res = await fetch(`/api/tasks?userEmail=${encodeURIComponent(userEmail)}&role=${userRole}`);
       if (res.ok) {
         const data = await res.json();
         callback(data);
@@ -137,53 +170,158 @@ export const subscribeAllTasks = (userEmail: string, userPhone: string, userRole
   return () => clearInterval(interval);
 };
 
-// Create a task
-export const createTask = async (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>) => {
-  const res = await authFetch("/api/tasks", {
+// Send automated notification helper
+const sendAutomatedNotification = async (params: {
+  toEmail: string;
+  toName: string;
+  taskTitle: string;
+  projectName: string;
+  updaterName: string;
+  previousStatus?: string;
+  newStatus: string;
+  actionType: 'status_change' | 'assigned';
+  description?: string;
+  projectId: string;
+}) => {
+  try {
+    const response = await fetch("/api/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params)
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.notification) {
+        // Record notification via API proxy
+        await fetch("/api/notifications", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...data.notification,
+            projectId: params.projectId,
+            projectName: params.projectName,
+            taskTitle: params.taskTitle
+          })
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Failed to send notification via server api:", err);
+  }
+};
+
+// Create a task and send automated email notification
+export const createTask = async (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>, project: Project, creator: Employee, assignee: Employee) => {
+  const res = await fetch("/api/tasks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(task)
+    body: JSON.stringify({ task, project, creator, assignee })
   });
-  return await res.json();
+  
+  if (!res.ok) {
+    throw new Error("Failed to create task on server.");
+  }
+  
+  const createdTask = await res.json();
+
+  // Trigger automated notification in the background
+  sendAutomatedNotification({
+    toEmail: assignee.email,
+    toName: assignee.name,
+    taskTitle: task.title,
+    projectName: project.name,
+    updaterName: creator.name,
+    newStatus: 'assigned',
+    actionType: 'assigned',
+    description: task.description,
+    projectId: project.id
+  }).catch(err => {
+    console.error("Background task assignment notification failed:", err);
+  });
+
+  return createdTask as Task;
 };
 
-// Update task status
-export const updateTaskStatus = async (taskId: string, status: string) => {
-  const res = await authFetch(`/api/tasks/${taskId}/status`, {
+// Update task status and trigger notification
+export const updateTaskStatus = async (
+  task: Task, 
+  newStatus: 'assigned' | 'rejected' | 'in progress' | 'completed', 
+  project: Project, 
+  updater: Employee,
+  assignee: Employee,
+  extra?: {
+    rejectionNotes?: string;
+    notDoneNotes?: string;
+    completedRemarks?: string;
+    completionAttachment?: TaskAttachment | null;
+  }
+) => {
+  const res = await fetch(`/api/tasks/${task.id}/status`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status })
+    body: JSON.stringify({ 
+      newStatus, 
+      task, 
+      project, 
+      updater, 
+      assignee,
+      rejectionNotes: extra?.rejectionNotes,
+      notDoneNotes: extra?.notDoneNotes,
+      completedRemarks: extra?.completedRemarks,
+      completionAttachment: extra?.completionAttachment
+    })
   });
-  return await res.json();
+
+  if (!res.ok) {
+    throw new Error("Failed to update task status on server.");
+  }
+
+  const previousStatus = task.status;
+
+  // Trigger automated notifications in the background
+  const notificationEmails = new Set<string>();
+  notificationEmails.add(assignee.email);
+
+  try {
+    const empRes = await fetch("/api/employees");
+    if (empRes.ok) {
+      const emps: Employee[] = await empRes.json();
+      emps.forEach(emp => {
+        if (emp.role === "admin" && emp.email) {
+          notificationEmails.add(emp.email.trim().toLowerCase());
+        }
+      });
+    }
+  } catch (e) {
+    console.error("Error fetching admin emails for notifications:", e);
+  }
+
+  for (const email of Array.from(notificationEmails)) {
+    const isAssignee = email === assignee.email;
+    const name = isAssignee ? assignee.name : "Administrator";
+    sendAutomatedNotification({
+      toEmail: email,
+      toName: name,
+      taskTitle: task.title,
+      projectName: project.name,
+      updaterName: updater.name,
+      previousStatus,
+      newStatus,
+      actionType: 'status_change',
+      description: `Status changed from ${previousStatus} to ${newStatus} by ${updater.name}`,
+      projectId: project.id
+    }).catch(err => {
+      console.error(`Background status change notification failed for ${email}:`, err);
+    });
+  }
 };
 
-// Update task
-export const updateTask = async (taskId: string, updates: Partial<Task>) => {
-  const res = await authFetch(`/api/tasks/${taskId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(updates)
-  });
-  return await res.json();
-};
-
-// Delete task
-export const deleteTask = async (taskId: string) => {
-  const res = await authFetch(`/api/tasks/${taskId}`, { method: "DELETE" });
-  return await res.json();
-};
-
-// Delete completed tasks in a project
-export const deleteCompletedTasks = async (projectId: string) => {
-  const res = await authFetch(`/api/projects/${projectId}/tasks/completed`, { method: "DELETE" });
-  return await res.json();
-};
-
-// Subscribe to notifications
+// Listen to all email notifications
 export const subscribeNotifications = (callback: (notifications: EmailNotification[]) => void) => {
   const fetchNotifications = async () => {
     try {
-      const res = await authFetch("/api/notifications");
+      const res = await fetch("/api/notifications");
       if (res.ok) {
         const data = await res.json();
         callback(data);
@@ -194,41 +332,25 @@ export const subscribeNotifications = (callback: (notifications: EmailNotificati
   };
 
   fetchNotifications();
-  const interval = setInterval(fetchNotifications, 5000);
+  const interval = setInterval(fetchNotifications, 4000);
   return () => clearInterval(interval);
 };
 
-// Subscribe to logs
-export const subscribeLogs = (callback: (logs: AuditLog[]) => void) => {
+// Listen to project-wise audit logs (Admin action)
+export const subscribeAuditLogs = (callback: (logs: AuditLog[]) => void) => {
   const fetchLogs = async () => {
     try {
-      const res = await authFetch("/api/logs");
+      const res = await fetch("/api/logs");
       if (res.ok) {
         const data = await res.json();
         callback(data);
       }
     } catch (e) {
-      console.error("Error fetching logs:", e);
+      console.error("Error fetching audit logs:", e);
     }
   };
 
   fetchLogs();
-  const interval = setInterval(fetchLogs, 5000);
+  const interval = setInterval(fetchLogs, 4000);
   return () => clearInterval(interval);
-};
-
-// Update employee
-export const updateEmployee = async (id: string, updates: Partial<Employee>) => {
-  const res = await authFetch(`/api/employees/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(updates)
-  });
-  return await res.json();
-};
-
-// Delete employee
-export const deleteEmployee = async (id: string) => {
-  const res = await authFetch(`/api/employees/${id}`, { method: "DELETE" });
-  return await res.json();
 };

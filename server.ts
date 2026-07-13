@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
@@ -71,14 +72,18 @@ async function runSupabaseMigrations() {
         email TEXT NOT NULL,
         phone TEXT,
         designation TEXT,
-        role TEXT DEFAULT 'employee' CHECK (role IN ('admin', 'employee')),
-        password TEXT DEFAULT '123456'
+        role TEXT DEFAULT 'employee' CHECK (role IN ('admin', 'employee', 'client')),
+        password TEXT DEFAULT '123456',
+        "trackAttendance" BOOLEAN DEFAULT TRUE
       );
     `);
 
-    // Ensure password column exists if the table was created previously without it
+    // Ensure password and trackAttendance columns exist and drop old check constraint
     await client.query(`
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS password TEXT DEFAULT '123456';
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS "trackAttendance" BOOLEAN DEFAULT TRUE;
+      ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_role_check;
+      ALTER TABLE employees ADD CONSTRAINT employees_role_check CHECK (role IN ('admin', 'employee', 'client'));
     `);
 
     // 2. Create projects table
@@ -147,9 +152,24 @@ async function runSupabaseMigrations() {
       );
     `);
 
+    // 6. Create attendance table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS attendance (
+        id TEXT PRIMARY KEY,
+        employee_id TEXT NOT NULL,
+        employee_name TEXT NOT NULL,
+        date TEXT NOT NULL,
+        punch_in TEXT,
+        punch_out TEXT,
+        status TEXT DEFAULT 'present',
+        total_hours TEXT,
+        notes TEXT
+      );
+    `);
+
     // Ensure Row Level Security (RLS) is disabled, and create permissive public policies
     // to prevent "new row violates row-level security policy" errors if anon key is used.
-    const tables = ["employees", "projects", "tasks", "notifications", "logs"];
+    const tables = ["employees", "projects", "tasks", "notifications", "logs", "attendance"];
     for (const table of tables) {
       try {
         await client.query(`ALTER TABLE ${table} DISABLE ROW LEVEL SECURITY;`);
@@ -171,7 +191,19 @@ async function runSupabaseMigrations() {
       }
     }
 
-    console.log("Supabase PostgreSQL tables checked and created successfully.");
+    // Safely seed default Admin user if no administrator exists to avoid overriding custom DB modifications
+    const adminCheck = await client.query("SELECT COUNT(*) FROM employees WHERE role = 'admin';");
+    const adminCount = parseInt(adminCheck.rows[0].count, 10);
+    if (adminCount === 0) {
+      console.log("No administrator accounts found in Supabase. Seeding default Admin user...");
+      await client.query(`
+        INSERT INTO employees (id, name, email, phone, designation, role, password, "trackAttendance")
+        VALUES ('9848884897', 'Admin', 'Innovalleyservices@gmail.com', '9848884897', 'Administrator', 'admin', '123456', false);
+      `);
+      console.log("Default Admin user (Admin, 9848884897) seeded successfully in Supabase.");
+    } else {
+      console.log("Supabase already has an administrator account. Skipping auto-seeding.");
+    }
   } catch (err: any) {
     console.error("Failed to run Supabase PostgreSQL migrations:", err.message);
   } finally {
@@ -184,37 +216,68 @@ async function runSupabaseMigrations() {
 }
 
 
-// Initialize Supabase clients
+// Initialize Supabase if keys are provided
 const supabaseUrl = process.env.SUPABASE_URL || "";
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || "";
 
-// Service-role client for admin operations and JWT verification
-let supabaseAdmin: any = null;
-if (supabaseUrl && supabaseServiceRoleKey) {
+let supabase: any = null;
+if (supabaseUrl && supabaseKey) {
   try {
-    supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
-      auth: { persistSession: false }
+    supabase = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false
+      }
     });
-    console.log("Supabase admin client initialized.");
+    console.log("Supabase Client initialized successfully.");
   } catch (err) {
-    console.error("Failed to initialize Supabase admin client:", err);
+    console.error("Failed to initialize Supabase Client:", err);
   }
 }
 
-// Keep module-level supabase for backwards compatibility with existing code
-const supabase = supabaseAdmin;
+// Local DB in-memory cache (no file persistence)
+let localDB: { [collection: string]: { [id: string]: any } } = {
+  employees: {
+    "9848884897": {
+      id: "9848884897",
+      name: "Admin",
+      email: "Innovalleyservices@gmail.com",
+      phone: "9848884897",
+      designation: "Administrator",
+      role: "admin",
+      password: "123456",
+      trackAttendance: false
+    }
+  },
+  projects: {},
+  tasks: {},
+  notifications: {},
+  logs: {}
+};
 
-if (process.env.VERCEL && !supabaseAdmin) {
-  console.error(
-    "CRITICAL: Deployed on Vercel without Supabase configured. Set SUPABASE_URL " +
-    "and SUPABASE_SERVICE_ROLE_KEY in Vercel Environment Variables."
-  );
-}
-
-// DBWrapper: Supabase-only, no fallback. Fails fast if DB not configured.
 class DBWrapper {
+  public useLocalFallback = false;
+
+  async testSupabase() {
+    if (!supabase) {
+      console.error("Supabase configuration is missing! Database access is disabled.");
+      throw new Error("Supabase is not connected! Database is unavailable.");
+    }
+    this.useLocalFallback = false;
+    console.log("Supabase client active. Strict sync enabled with zero local fallback.");
+
+    // No-op. Skip REST API cleanup/seeding to avoid overriding custom DB modifications
+    console.log("Supabase REST API auto-seeding bypassed as requested.");
+  }
+
+  checkRLSError(err: any) {
+    if (!err) return;
+    const msg = (err.message || "").toLowerCase();
+    console.warn("Supabase query warning:", msg);
+  }
+
   collection(name: string) {
+    const self = this;
+    
     class CollectionQuery {
       private filters: Array<{ field: string; op: string; val: any }> = [];
       private sortField: string | null = null;
@@ -232,88 +295,136 @@ class DBWrapper {
       }
 
       async get(): Promise<any> {
-        let query = supabase.from(name).select("*");
-
-        for (const filter of this.filters) {
-          const { field, op, val } = filter;
-          if (op === "==") {
-            query = query.eq(field, val);
-          } else if (op === "array-contains") {
-            if (field === "members") {
-              query = query.contains(field, JSON.stringify([val]));
-            } else {
-              query = query.contains(field, [val]);
+        if (!supabase) {
+          throw new Error("Supabase is not connected!");
+        }
+        try {
+          let query = supabase.from(name).select("*");
+          
+          for (const filter of this.filters) {
+            const { field, op, val } = filter;
+            if (op === "==") {
+              query = query.eq(field, val);
+            } else if (op === "array-contains") {
+              // Handle JSONB array contains or text array contains in Supabase
+              if (field === "members") {
+                query = query.contains(field, JSON.stringify([val]));
+              } else {
+                query = query.contains(field, [val]);
+              }
             }
           }
-        }
 
-        if (this.sortField) {
-          query = query.order(this.sortField, { ascending: this.sortDir === "asc" });
-        }
-
-        const { data, error } = await query;
-        if (error) throw error;
-
-        const docs = (data || []).map((item: any) => ({
-          id: item.id || "",
-          data: () => item
-        }));
-
-        return {
-          empty: docs.length === 0,
-          size: docs.length,
-          docs,
-          forEach(callback: (doc: any) => void) {
-            docs.forEach(doc => callback(doc));
+          if (this.sortField) {
+            query = query.order(this.sortField, { ascending: this.sortDir === "asc" });
           }
-        };
+
+          const { data, error } = await query;
+          if (error) {
+            console.error(`Supabase query error on '${name}':`, error.message);
+            throw error;
+          }
+
+          const docs = (data || []).map((item: any) => ({
+            id: item.id || "",
+            data: () => item
+          }));
+
+          return {
+            empty: docs.length === 0,
+            size: docs.length,
+            docs,
+            forEach(callback: any) {
+              docs.forEach(doc => callback(doc));
+            }
+          };
+        } catch (err: any) {
+          console.error(`Supabase query failed on '${name}':`, err.message);
+          self.checkRLSError(err);
+          throw err;
+        }
       }
     }
 
     return {
       doc(docId?: string) {
-        const id = docId || crypto.randomUUID();
+        const id = docId || Math.random().toString(36).substring(2, 15);
         return {
           id,
           async get() {
-            const { data, error } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
-            if (error) throw error;
-            return {
-              exists: !!data,
-              id,
-              data: () => data || null
-            };
+            if (!supabase) {
+              throw new Error("Supabase is not connected!");
+            }
+            try {
+              const { data, error } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
+              if (error) throw error;
+              return {
+                exists: !!data,
+                id,
+                data: () => data || null
+              };
+            } catch (err: any) {
+              console.error(`Supabase get doc failed on '${name}/${id}':`, err.message);
+              self.checkRLSError(err);
+              throw err;
+            }
           },
 
           async set(data: any, options?: { merge?: boolean }) {
             const isMerge = options?.merge === true;
-            let finalData = { ...data };
-
-            if (isMerge) {
-              const { data: existing } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
-              if (existing) {
-                finalData = { ...existing, ...data };
-              }
+            if (!supabase) {
+              throw new Error("Supabase is not connected!");
             }
-
-            const { error } = await supabase.from(name).upsert({ id, ...finalData });
-            if (error) throw error;
+            try {
+              let mergedData = { ...data };
+              if (isMerge) {
+                const { data: existing, error: getErr } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
+                if (getErr) throw getErr;
+                if (existing) {
+                  mergedData = { ...existing, ...data };
+                }
+              }
+              const { error } = await supabase.from(name).upsert({ id, ...mergedData });
+              if (error) throw error;
+            } catch (err: any) {
+              console.error(`Supabase set doc failed on '${name}/${id}':`, err.message);
+              self.checkRLSError(err);
+              throw err;
+            }
           },
 
           async update(data: any) {
-            const { error } = await supabase.from(name).update(data).eq("id", id);
-            if (error) throw error;
+            if (!supabase) {
+              throw new Error("Supabase is not connected!");
+            }
+            try {
+              const { error } = await supabase.from(name).update(data).eq("id", id);
+              if (error) throw error;
+            } catch (err: any) {
+              console.error(`Supabase update doc failed on '${name}/${id}':`, err.message);
+              self.checkRLSError(err);
+              throw err;
+            }
           },
 
           async delete() {
-            const { error } = await supabase.from(name).delete().eq("id", id);
-            if (error) throw error;
+            if (!supabase) {
+              throw new Error("Supabase is not connected!");
+            }
+            try {
+              const { error } = await supabase.from(name).delete().eq("id", id);
+              if (error) throw error;
+            } catch (err: any) {
+              console.error(`Supabase delete doc failed on '${name}/${id}':`, err.message);
+              self.checkRLSError(err);
+              throw err;
+            }
           }
         };
       },
 
       async add(data: any) {
-        const id = crypto.randomUUID();
+        const id = Math.random().toString(36).substring(2, 15);
         const ref = this.doc(id);
         await ref.set(data);
         return ref;
@@ -336,6 +447,9 @@ class DBWrapper {
 
 const db = new DBWrapper();
 runSupabaseMigrations()
+  .then(() => {
+    db.testSupabase();
+  })
   .catch((err) => {
     console.error("Critical error in runSupabaseMigrations on startup:", err);
   });
@@ -362,55 +476,9 @@ function getGeminiClient() {
 const app = express();
 export { app };
 
-async function requireAuth(req: any, res: any, next: any) {
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-
-  if (!token) {
-    return res.status(401).json({ error: "Missing authorization token." });
-  }
-
-  try {
-    // Verify Supabase JWT
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
-
-    if (error || !user) {
-      return res.status(401).json({ error: "Invalid or expired token." });
-    }
-
-    // Fetch employee profile to get role
-    const { data: profile, error: profileErr } = await supabaseAdmin
-      .from('employees')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-
-    if (profileErr || !profile) {
-      return res.status(401).json({ error: "User profile not found." });
-    }
-
-    // Attach user info for route handlers
-    req.authUser = {
-      id: user.id,
-      email: user.email || "",
-      role: profile.role,
-      name: profile.name || "",
-      phone: profile.phone || ""
-    };
-
-    next();
-  } catch (err: any) {
-    console.error("Auth error:", err);
-    res.status(401).json({ error: "Authentication failed." });
-  }
-}
-
-function requireAdmin(req: any, res: any, next: any) {
-  if (req.authUser?.role !== "admin") {
-    return res.status(403).json({ error: "Administrator access required." });
-  }
-  next();
-}
+const otpCodes = new Map<string, string>();
+const authChallenges = new Map<string, any>();
+const captchaStore = new Map<string, string>();
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -445,25 +513,25 @@ app.use((req, res, next) => {
 
   // API Route for health check
   app.get("/api/health", (req, res) => {
-    res.json({
-      status: "ok",
-      timestamp: Date.now(),
-      database: supabase ? "supabase" : "in-memory-fallback (data will not persist)"
-    });
+    res.json({ status: "ok", timestamp: Date.now() });
   });
 
-  // Seed Admin and Developer users if they do not exist
+  // Seed endpoint bypassed to preserve existing Supabase-only logins
+  app.post("/api/employees/seed", async (req, res) => {
+    res.json({ success: true, seeded: false, message: "Automatic seeding disabled as requested. Fetching logins from Supabase only." });
+  });
+
   // List all employees
-  app.get("/api/employees", requireAuth, async (req, res) => {
+  app.get("/api/employees", async (req, res) => {
     try {
       const snapshot = await db.collection("employees").get();
       const list: any[] = [];
       snapshot.forEach(doc => {
-        const { password, ...safeData } = doc.data() || {};
+        const data = doc.data();
         list.push({
           id: doc.id,
-          phone: safeData.phone || "",
-          ...safeData
+          phone: data.phone || "",
+          ...data
         });
       });
       res.json(list);
@@ -474,48 +542,32 @@ app.use((req, res, next) => {
   });
 
   // Add new employee
-  app.post("/api/employees", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/employees", async (req, res) => {
     try {
-      const { name, email, phone, designation, password } = req.body;
-
-      if (!email || !password) {
-        return res.status(400).json({ error: "Email and password are required." });
+      const employee = req.body;
+      const phoneNormalized = employee.phone ? employee.phone.replace(/[^0-9]/g, "") : "";
+      if (!phoneNormalized || phoneNormalized.length < 10) {
+        return res.status(400).json({ error: "A valid 10-digit mobile number is required as the primary ID." });
+      }
+      
+      const empRef = db.collection("employees").doc(phoneNormalized);
+      const existing = await empRef.get();
+      if (existing.exists) {
+        return res.status(400).json({ error: "An employee with this mobile number already exists." });
       }
 
-      const emailTrimmed = email.trim().toLowerCase();
-      const passwordTrimmed = password.trim();
-
-      // Create Supabase Auth user (service-role only)
-      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-        email: emailTrimmed,
-        password: passwordTrimmed,
-        email_confirm: true
-      });
-
-      if (authError) {
-        if (authError.message?.includes("already registered")) {
-          return res.status(400).json({ error: "Employee with this email already exists." });
-        }
-        return res.status(400).json({ error: authError.message });
-      }
-
-      // Create employee profile row with UUID from auth user
-      const { error: profileError } = await supabaseAdmin
-        .from('employees')
-        .insert({
-          id: authData.user.id,
-          name: name?.trim() || "",
-          email: emailTrimmed,
-          phone: phone?.trim() || null,
-          designation: designation?.trim() || null,
-          role: 'employee'
-        });
-
-      if (profileError) {
-        return res.status(400).json({ error: profileError.message });
-      }
-
-      res.json({ success: true, message: "Employee created successfully." });
+      const emailNormalized = employee.email.trim().toLowerCase();
+      const newEmp = {
+        ...employee,
+        id: phoneNormalized,
+        email: emailNormalized,
+        phone: phoneNormalized,
+        password: employee.password ? employee.password.trim() : "123456",
+        role: employee.role || 'employee',
+        trackAttendance: employee.trackAttendance !== undefined ? employee.trackAttendance : true
+      };
+      await empRef.set(newEmp);
+      res.json(newEmp);
     } catch (err: any) {
       console.error("Error adding employee on server:", err);
       res.status(500).json({ error: err.message });
@@ -523,18 +575,11 @@ app.use((req, res, next) => {
   });
 
   // Edit employee details (Admin action)
-  app.put("/api/employees/:email", requireAuth, async (req: any, res) => {
+  app.put("/api/employees/:email", async (req, res) => {
     try {
       const { email } = req.params;
       const emailNormalized = email.trim().toLowerCase();
       const { name, email: newEmail, phone, designation, role } = req.body;
-
-      // Role and password are the two fields that could let any logged-in employee
-      // grant themselves admin (defeating the admin-only project/employee-creation rules)
-      // or take over another employee's account. Everything else is open, per product decision.
-      if ((role !== undefined || req.body.password) && req.authUser.role !== "admin") {
-        return res.status(403).json({ error: "Only administrators can change role or password from this screen." });
-      }
       
       let empRef = db.collection("employees").doc(emailNormalized);
       let docSnap = await empRef.get();
@@ -577,7 +622,8 @@ app.use((req, res, next) => {
       if (phone !== undefined) updateData.phone = phone;
       if (designation !== undefined) updateData.designation = designation;
       if (role !== undefined) updateData.role = role;
-      if (req.body.password) updateData.password = hashPassword(req.body.password);
+      if (req.body.password !== undefined) updateData.password = req.body.password;
+      if (req.body.trackAttendance !== undefined) updateData.trackAttendance = req.body.trackAttendance;
       
       if (docSnap && docSnap.exists) {
         await empRef.update(updateData);
@@ -593,7 +639,7 @@ app.use((req, res, next) => {
   });
 
   // Delete an employee (Admin action)
-  app.delete("/api/employees/:email", requireAuth, async (req, res) => {
+  app.delete("/api/employees/:email", async (req, res) => {
     try {
       const { email } = req.params;
       const emailNormalized = email.trim().toLowerCase();
@@ -648,6 +694,132 @@ app.use((req, res, next) => {
     }
   });
 
+  // GET Attendance logs (Admin or Employee query)
+  app.get("/api/attendance", async (req, res) => {
+    try {
+      const { employee_id, date } = req.query;
+      let ref: any = db.collection("attendance");
+      if (employee_id) {
+        ref = ref.where("employee_id", "==", employee_id.toString());
+      }
+      if (date) {
+        ref = ref.where("date", "==", date.toString());
+      }
+      const snapshot = await ref.get();
+      const list: any[] = [];
+      snapshot.forEach(doc => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+      res.json(list);
+    } catch (err: any) {
+      console.error("Error listing attendance logs on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST Attendance Punch-In
+  app.post("/api/attendance/punch-in", async (req, res) => {
+    try {
+      const { employee_id, employee_name, date, punch_in, notes } = req.body;
+      if (!employee_id || !date || !punch_in) {
+        return res.status(400).json({ error: "employee_id, date, and punch_in are required." });
+      }
+      const recordId = `${employee_id}_${date}`;
+      const docRef = db.collection("attendance").doc(recordId);
+      const existing = await docRef.get();
+      if (existing.exists) {
+        return res.status(400).json({ error: "Already punched in for today." });
+      }
+      const newRecord = {
+        id: recordId,
+        employee_id,
+        employee_name,
+        date,
+        punch_in,
+        punch_out: null,
+        status: "present",
+        total_hours: null,
+        notes: notes || ""
+      };
+      await docRef.set(newRecord);
+      res.json(newRecord);
+    } catch (err: any) {
+      console.error("Error recording punch-in:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST Attendance Punch-Out
+  app.post("/api/attendance/punch-out", async (req, res) => {
+    try {
+      const { employee_id, date, punch_out, total_hours } = req.body;
+      if (!employee_id || !date || !punch_out) {
+        return res.status(400).json({ error: "employee_id, date, and punch_out are required." });
+      }
+      const recordId = `${employee_id}_${date}`;
+      const docRef = db.collection("attendance").doc(recordId);
+      const existing = await docRef.get();
+      if (!existing.exists) {
+        return res.status(400).json({ error: "No punch-in record found for today." });
+      }
+      const recordData = existing.data();
+      if (recordData.punch_out) {
+        return res.status(400).json({ error: "Already punched out for today." });
+      }
+      await docRef.update({
+        punch_out,
+        total_hours: total_hours || ""
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error recording punch-out:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST Task reassignment / pushing
+  app.post("/api/tasks/:id/reassign", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { assignedTo, operatorPhone, operatorName } = req.body;
+      if (!assignedTo) {
+        return res.status(400).json({ error: "assignedTo is required" });
+      }
+
+      const taskRef = db.collection("tasks").doc(id);
+      const taskSnap = await taskRef.get();
+      if (!taskSnap.exists) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+
+      const taskData = taskSnap.data();
+      const previousAssignee = taskData.assignedTo;
+
+      await taskRef.update({
+        assignedTo,
+        updatedAt: Date.now()
+      });
+
+      // Write log
+      const logId = Math.random().toString(36).substring(2, 15);
+      await db.collection("logs").doc(logId).set({
+        id: logId,
+        projectId: taskData.projectId,
+        projectName: "",
+        action: "TASK_REASSIGNED",
+        details: `Task "${taskData.title}" was re-assigned to ${assignedTo} by ${operatorName}`,
+        operatorPhone: operatorPhone || "",
+        operatorName: operatorName || "",
+        timestamp: Date.now()
+      });
+
+      res.json({ success: true, previousAssignee, newAssignee: assignedTo });
+    } catch (err: any) {
+      console.error("Error reassigning task on server:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Helper to generate the randomized email masking challenge
   function generateEmailChallenge(email: string) {
     const parts = email.split("@");
@@ -687,11 +859,151 @@ app.use((req, res, next) => {
     };
   }
 
-  // Generate a new alphanumeric captcha (stateless signature-based to support multi-container/serverless).
-  // The plaintext answer is rendered into an SVG image server-side and never sent to the client as text —
-  // sending it in the JSON response (as this used to) makes the captcha trivially readable by the caller.
+  // Generate a new alphanumeric captcha (stateless signature-based to support multi-container/serverless)
+  app.get("/api/auth/captcha", (req, res) => {
+    try {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // clear alphanumeric chars
+      let captchaText = "";
+      for (let i = 0; i < 4; i++) {
+        captchaText += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      
+      const timestamp = Date.now();
+      const salt = process.env.JWT_SECRET || "innovalley-secure-salt-2026";
+      const hash = crypto.createHmac("sha256", salt).update(`${timestamp}-${captchaText}`).digest("hex");
+      const captchaId = `${timestamp}.${hash}`;
+
+      res.json({ captchaId, captchaText });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Verify and Login
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { identifier, password } = req.body;
+      const input = (identifier || "").toString().trim();
+      const pass = (password || "").toString().trim();
+
+      if (!input || !pass) {
+        return res.status(400).json({ error: "Email/Phone and Password are required." });
+      }
+
+      const inputNormalized = input.toLowerCase();
+
+      // Search for employee by email or phone
+      let matchedEmployee: any = null;
+      
+      // 1. Check by ID (which is lowercase email) or direct email field
+      const empRef = db.collection("employees").doc(inputNormalized);
+      const empSnap = await empRef.get();
+      if (empSnap.exists) {
+        matchedEmployee = empSnap.data();
+      } else {
+        // Query by email
+        const emailSnap = await db.collection("employees").where("email", "==", inputNormalized).get();
+        if (!emailSnap.empty) {
+          emailSnap.forEach((doc: any) => {
+            matchedEmployee = doc.data();
+          });
+        }
+      }
+
+      // 2. Query by phone if not found
+      if (!matchedEmployee) {
+        const cleanedPhone = input.replace(/[^0-9]/g, "");
+        if (cleanedPhone) {
+          const phoneSnap = await db.collection("employees").where("phone", "==", cleanedPhone).get();
+          if (!phoneSnap.empty) {
+            phoneSnap.forEach((doc: any) => {
+              matchedEmployee = doc.data();
+            });
+          }
+        }
+      }
+
+      if (!matchedEmployee) {
+        return res.status(404).json({ error: "User is not registered in the system. Please ask Admin to add you." });
+      }
+
+      // Check password
+      const dbPassword = matchedEmployee.password || "123456"; // default fallback for pre-existing accounts
+      if (pass !== dbPassword) {
+        return res.status(400).json({ error: "Incorrect password. Please try again." });
+      }
+
+      return res.json({
+        success: true,
+        employee: matchedEmployee
+      });
+    } catch (err: any) {
+      console.error("Login error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // User changes their own password/PIN
+  app.post("/api/auth/change-password", async (req, res) => {
+    try {
+      const { email, currentPassword, newPassword } = req.body;
+      if (!email || !newPassword) {
+        return res.status(400).json({ error: "Identifier and new PIN are required." });
+      }
+
+      const emailNormalized = email.trim().toLowerCase();
+      
+      let empRef = db.collection("employees").doc(emailNormalized);
+      let docSnap = await empRef.get();
+      let employeeData: any = null;
+      
+      if (docSnap.exists) {
+        employeeData = docSnap.data();
+      } else {
+        // Query by email field
+        const emailSnap = await db.collection("employees").where("email", "==", emailNormalized).get();
+        if (!emailSnap.empty) {
+          emailSnap.forEach((doc: any) => {
+            empRef = db.collection("employees").doc(doc.id);
+            employeeData = doc.data();
+          });
+        } else {
+          // Try query by phone
+          const cleanedPhone = emailNormalized.replace(/[^0-9]/g, "");
+          if (cleanedPhone) {
+            const phoneSnap = await db.collection("employees").where("phone", "==", cleanedPhone).get();
+            if (!phoneSnap.empty) {
+              phoneSnap.forEach((doc: any) => {
+                empRef = db.collection("employees").doc(doc.id);
+                employeeData = doc.data();
+              });
+            }
+          }
+        }
+      }
+      
+      if (!employeeData) {
+        return res.status(404).json({ error: "Employee profile not found." });
+      }
+      
+      const dbPassword = employeeData.password || "123456"; // Default password fallback
+      
+      const isCurrentCorrect = currentPassword === dbPassword;
+        
+      if (!isCurrentCorrect) {
+        return res.status(400).json({ error: "Incorrect current PIN." });
+      }
+      
+      await empRef.update({ password: newPassword });
+      res.json({ success: true, message: "PIN updated successfully!" });
+    } catch (err: any) {
+      console.error("Error changing PIN:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // List projects
-  app.get("/api/projects", requireAuth, async (req, res) => {
+  app.get("/api/projects", async (req, res) => {
     try {
       const { userPhone, userEmail, role } = req.query;
       const targetEmail = (userEmail || userPhone || "").toString().trim().toLowerCase();
@@ -723,7 +1035,7 @@ app.use((req, res, next) => {
   });
 
   // Create project
-  app.post("/api/projects", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/projects", async (req, res) => {
     try {
       const { name, description, createdBy, members } = req.body;
       const uniqueMembers = Array.from(new Set(members || []));
@@ -764,7 +1076,7 @@ app.use((req, res, next) => {
   });
 
   // Update project members
-  app.put("/api/projects/:id/members", requireAuth, async (req, res) => {
+  app.put("/api/projects/:id/members", async (req, res) => {
     try {
       const { id } = req.params;
       const { members } = req.body;
@@ -805,7 +1117,7 @@ app.use((req, res, next) => {
   });
 
   // Edit project details (Admin action)
-  app.put("/api/projects/:id", requireAuth, async (req, res) => {
+  app.put("/api/projects/:id", async (req, res) => {
     try {
       const { id } = req.params;
       const { name, description, members } = req.body;
@@ -861,7 +1173,7 @@ app.use((req, res, next) => {
   });
 
   // Delete a project and its tasks (Admin action)
-  app.delete("/api/projects/:id", requireAuth, async (req, res) => {
+  app.delete("/api/projects/:id", async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -892,7 +1204,7 @@ app.use((req, res, next) => {
   });
 
   // Delete completed tasks for a specific project (Admin action)
-  app.delete("/api/projects/:projectId/tasks/completed", requireAuth, async (req, res) => {
+  app.delete("/api/projects/:projectId/tasks/completed", async (req, res) => {
     try {
       const { projectId } = req.params;
       const tasksSnap = await db.collection("tasks").where("projectId", "==", projectId).get();
@@ -916,11 +1228,10 @@ app.use((req, res, next) => {
   });
 
   // List tasks
-  app.get("/api/tasks", requireAuth, async (req, res) => {
+  app.get("/api/tasks", async (req, res) => {
     try {
       const { projectId, userPhone, userEmail, role } = req.query;
-      const targetEmail = (userEmail || "").toString().trim().toLowerCase();
-      const targetPhone = (userPhone || "").toString().trim();
+      const targetEmail = (userEmail || userPhone || "").toString().trim().toLowerCase();
       let snapshot;
       
       const isActuallyAdmin = role === "admin";
@@ -936,14 +1247,12 @@ app.use((req, res, next) => {
         list.push({ id: doc.id, ...doc.data() });
       });
 
-      // Filter tasks based on role and identity. assignedTo/assignedBy are stored as phone
-      // numbers (see POST /api/tasks), so matching on email alone silently dropped every task
-      // for non-admin users — match against both.
+      // Filter tasks based on role and email
       let filteredList = list;
-      if (!isActuallyAdmin && (targetEmail || targetPhone)) {
-        filteredList = list.filter(t =>
-          (t.assignedTo && ((targetEmail && t.assignedTo.trim().toLowerCase() === targetEmail) || (targetPhone && t.assignedTo === targetPhone))) ||
-          (t.assignedBy && ((targetEmail && t.assignedBy.trim().toLowerCase() === targetEmail) || (targetPhone && t.assignedBy === targetPhone)))
+      if (!isActuallyAdmin && targetEmail) {
+        filteredList = list.filter(t => 
+          (t.assignedTo && t.assignedTo.trim().toLowerCase() === targetEmail) || 
+          (t.assignedBy && t.assignedBy.trim().toLowerCase() === targetEmail)
         );
       }
 
@@ -967,7 +1276,7 @@ app.use((req, res, next) => {
   });
 
   // Create task
-  app.post("/api/tasks", requireAuth, async (req, res) => {
+  app.post("/api/tasks", async (req, res) => {
     try {
       const { task, project, creator, assignee } = req.body;
       const timestamp = Date.now();
@@ -1003,16 +1312,11 @@ app.use((req, res, next) => {
   });
 
   // Update task status
-  app.put("/api/tasks/:id/status", requireAuth, async (req: any, res) => {
+  app.put("/api/tasks/:id/status", async (req, res) => {
     try {
       const { id } = req.params;
       const { newStatus, task, project, updater, assignee, rejectionNotes, notDoneNotes, completedRemarks, attachment, completionAttachment } = req.body;
-
-      const assigneeEmail = (assignee?.email || "").trim().toLowerCase();
-      if (req.authUser.role !== "admin" && req.authUser.email !== assigneeEmail) {
-        return res.status(403).json({ error: "You can only update tasks assigned to you." });
-      }
-
+      
       const updateData: any = {
         status: newStatus,
         updatedAt: Date.now()
@@ -1056,7 +1360,7 @@ app.use((req, res, next) => {
   });
 
   // List all audit logs for Admin
-  app.get("/api/logs", requireAuth, async (req, res) => {
+  app.get("/api/logs", async (req, res) => {
     try {
       const snapshot = await db.collection("logs").get();
       const list: any[] = [];
@@ -1072,7 +1376,7 @@ app.use((req, res, next) => {
   });
 
   // List notifications
-  app.get("/api/notifications", requireAuth, async (req, res) => {
+  app.get("/api/notifications", async (req, res) => {
     try {
       const snapshot = await db.collection("notifications").get();
       const list: any[] = [];
@@ -1088,7 +1392,7 @@ app.use((req, res, next) => {
   });
 
   // Log notification
-  app.post("/api/notifications", requireAuth, async (req, res) => {
+  app.post("/api/notifications", async (req, res) => {
     try {
       const notification = req.body;
       const docRef = await db.collection("notifications").add(notification);
@@ -1100,7 +1404,7 @@ app.use((req, res, next) => {
   });
 
   // API Route for automated notifications using Gemini
-  app.post("/api/notify", requireAuth, async (req, res) => {
+  app.post("/api/notify", async (req, res) => {
     try {
       const {
         toEmail,
@@ -1218,10 +1522,8 @@ app.use((req, res, next) => {
   // Vite middleware and local server setup
   const PORT = 3000;
 
-  // Serve static files in production (Cloud Run/local container only — on Vercel,
-  // vercel.json rewrites already route static assets straight to the CDN and this
-  // function's deployment bundle doesn't contain the built `dist` folder anyway).
-  if (process.env.NODE_ENV === "production" && !process.env.VERCEL) {
+  // Serve static files in production (works on both Cloud Run/local and Vercel)
+  if (process.env.NODE_ENV === "production") {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res, next) => {
@@ -1234,9 +1536,6 @@ app.use((req, res, next) => {
 
   async function runLocalServer() {
     if (process.env.NODE_ENV !== "production") {
-      // Loaded dynamically so Vite (a dev-only dependency) is never pulled into
-      // the Vercel serverless function bundle, which only ever runs the production branch.
-      const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: "spa",

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Users, FolderKanban, ShieldCheck, UserCheck, AlertCircle, Sparkles, Trash2, Mail, Phone, Pencil, X, Check, Building2, History, Search } from "lucide-react";
 import { Employee, Project, AuditLog, Task } from "../types";
-import { addEmployee, createProject, deleteEmployee, deleteProject, updateEmployee, updateProject, subscribeLogs, subscribeAllTasks, deleteCompletedTasks } from "../lib/dbService";
+import { addEmployee, createProject, deleteEmployee, deleteProject, updateEmployee, updateProject, subscribeAuditLogs, subscribeAllTasks, deleteCompletedTasks } from "../lib/dbService";
 import { motion, AnimatePresence } from "motion/react";
 
 interface AdminPanelProps {
@@ -29,7 +29,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   // Subscribe to audit logs
   useEffect(() => {
     if (adminSubTab === 'logs') {
-      const unsubscribe = subscribeLogs((updatedLogs) => {
+      const unsubscribe = subscribeAuditLogs((updatedLogs) => {
         setAuditLogs(updatedLogs);
       });
       return () => unsubscribe();
@@ -39,7 +39,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   // Subscribe to all tasks to track completed tasks per project
   const [allTasks, setAllTasks] = useState<Task[]>([]);
   useEffect(() => {
-    const unsubscribe = subscribeAllTasks(currentUser.email || "", currentUser.phone || "", currentUser.role || "", (tasks) => {
+    const unsubscribe = subscribeAllTasks(currentUser.email || "", currentUser.role || "", (tasks) => {
       setAllTasks(tasks);
     });
     return () => unsubscribe();
@@ -51,6 +51,8 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   const [empPhone, setEmpPhone] = useState("");
   const [empDesignation, setEmpDesignation] = useState("");
   const [empPassword, setEmpPassword] = useState("");
+  const [empRole, setEmpRole] = useState<'admin' | 'employee' | 'client'>('employee');
+  const [empTrackAttendance, setEmpTrackAttendance] = useState(true);
   const [empError, setEmpError] = useState<string | null>(null);
   const [empSuccess, setEmpSuccess] = useState(false);
   const [empLoading, setEmpLoading] = useState(false);
@@ -68,7 +70,8 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   const [editEmpName, setEditEmpName] = useState("");
   const [editEmpEmail, setEditEmpEmail] = useState("");
   const [editEmpDesignation, setEditEmpDesignation] = useState("");
-  const [editEmpRole, setEditEmpRole] = useState<'admin' | 'employee'>('employee');
+  const [editEmpRole, setEditEmpRole] = useState<'admin' | 'employee' | 'client'>('employee');
+  const [editEmpTrackAttendance, setEditEmpTrackAttendance] = useState(true);
   const [editEmpPassword, setEditEmpPassword] = useState("");
   const [editEmpLoading, setEditEmpLoading] = useState(false);
   const [editEmpError, setEditEmpError] = useState<string | null>(null);
@@ -184,7 +187,9 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
         email: emailNormalized,
         phone: normalizedPhone,
         designation: empDesignation,
-        password: empPassword || "123456"
+        password: empPassword || "123456",
+        role: empRole,
+        trackAttendance: empRole === 'employee' ? empTrackAttendance : false
       });
 
       setEmpName("");
@@ -192,6 +197,8 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
       setEmpPhone("");
       setEmpDesignation("");
       setEmpPassword("");
+      setEmpRole("employee");
+      setEmpTrackAttendance(true);
       setEmpSuccess(true);
       setTimeout(() => setEmpSuccess(false), 3000);
     } catch (err: any) {
@@ -245,7 +252,8 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
         email: editEmpEmail.trim().toLowerCase(),
         designation: editEmpDesignation,
         role: editEmpRole,
-        ...(editEmpPassword.trim() ? { password: editEmpPassword.trim() } : {})
+        password: editEmpPassword,
+        trackAttendance: editEmpRole === 'employee' ? editEmpTrackAttendance : false
       });
       if (res && res.error) {
         setEditEmpError(res.error);
@@ -437,6 +445,37 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                   />
                 </div>
 
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">User Role</label>
+                  <select
+                    value={empRole}
+                    onChange={(e) => {
+                      const role = e.target.value as 'admin' | 'employee' | 'client';
+                      setEmpRole(role);
+                    }}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-semibold text-slate-800"
+                  >
+                    <option value="employee">Employee (Performs tasks, tracks attendance)</option>
+                    <option value="client">Client (Adds tasks only, does not perform tasks)</option>
+                    <option value="admin">Administrator (Full system control)</option>
+                  </select>
+                </div>
+
+                {empRole === 'employee' && (
+                  <div className="flex items-center gap-2 py-1">
+                    <input
+                      type="checkbox"
+                      id="track-attendance"
+                      checked={empTrackAttendance}
+                      onChange={(e) => setEmpTrackAttendance(e.target.checked)}
+                      className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
+                    />
+                    <label htmlFor="track-attendance" className="text-[11px] font-semibold text-slate-600 select-none cursor-pointer">
+                      Track Attendance for this employee?
+                    </label>
+                  </div>
+                )}
+
                 <button
                   type="submit"
                   disabled={empLoading}
@@ -511,13 +550,26 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                             </span>
                           </td>
                           <td className="p-3">
-                            <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                              emp.role === 'admin' || isSystemAdmin
-                                ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/60'
-                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                            }`}>
-                              {emp.role === 'admin' || isSystemAdmin ? 'Admin' : 'Employee'}
-                            </span>
+                            <div className="flex flex-col gap-1 items-start">
+                              <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                                emp.role === 'admin' || isSystemAdmin
+                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/60'
+                                  : emp.role === 'client'
+                                  ? 'bg-amber-50 text-amber-700 border border-amber-200/60'
+                                  : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
+                              }`}>
+                                {emp.role === 'admin' || isSystemAdmin ? 'Admin' : emp.role === 'client' ? 'Client' : 'Employee'}
+                              </span>
+                              {emp.role === 'employee' && (
+                                <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
+                                  emp.trackAttendance !== false 
+                                    ? 'bg-slate-100 text-slate-600 border border-slate-200/60' 
+                                    : 'bg-rose-50 text-rose-600 border border-rose-200/50'
+                                }`}>
+                                  {emp.trackAttendance !== false ? 'Attendance: On' : 'Attendance: Off'}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="p-3 text-right">
                             {isSystemAdmin ? (
@@ -531,7 +583,8 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                                     setEditEmpEmail(emp.email);
                                     setEditEmpDesignation(emp.designation || "");
                                     setEditEmpRole(emp.role || "employee");
-                                    setEditEmpPassword("");
+                                    setEditEmpTrackAttendance(emp.trackAttendance !== false);
+                                    setEditEmpPassword(emp.password || "");
                                     setEditEmpError(null);
                                   }}
                                   className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
@@ -923,19 +976,36 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">Access / Permission Role</label>
                     <select
                       value={editEmpRole}
-                      onChange={(e) => setEditEmpRole(e.target.value as 'admin' | 'employee')}
+                      onChange={(e) => setEditEmpRole(e.target.value as 'admin' | 'employee' | 'client')}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-semibold text-slate-700 bg-slate-50 cursor-pointer"
                     >
                       <option value="employee">Employee (Limited Board Access)</option>
+                      <option value="client">Client (Adds Tasks Only)</option>
                       <option value="admin">Administrator (Full Control)</option>
                     </select>
                   </div>
+
+                  {editEmpRole === 'employee' && (
+                    <div className="flex items-center gap-2 py-1">
+                      <input
+                        type="checkbox"
+                        id="edit-track-attendance"
+                        checked={editEmpTrackAttendance}
+                        onChange={(e) => setEditEmpTrackAttendance(e.target.checked)}
+                        className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
+                      />
+                      <label htmlFor="edit-track-attendance" className="text-[11px] font-semibold text-slate-600 select-none cursor-pointer">
+                        Track Attendance for this employee?
+                      </label>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">Change / Update Password</label>
                     <input
                       type="text"
-                      placeholder="Leave blank to keep current password"
+                      required
+                      placeholder="Enter new password"
                       value={editEmpPassword}
                       onChange={(e) => setEditEmpPassword(e.target.value)}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium text-slate-800"

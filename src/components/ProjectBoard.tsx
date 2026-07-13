@@ -17,6 +17,7 @@ import {
   Sparkles,
   RefreshCw,
   FolderOpen,
+  ArrowRightLeft,
   X
 } from "lucide-react";
 import { Employee, Project, Task, TaskAttachment } from "../types";
@@ -93,7 +94,7 @@ export default function ProjectBoard({ currentUser, employees, projects }: Proje
   useEffect(() => {
     if (selectedProjectId) {
       setLoadingTasks(true);
-      const unsubscribe = subscribeTasks(selectedProjectId, currentUser.email || "", currentUser.phone || "", currentUser.role, (updatedTasks) => {
+      const unsubscribe = subscribeTasks(selectedProjectId, currentUser.email || "", currentUser.role, (updatedTasks) => {
         setTasks(updatedTasks);
         setLoadingTasks(false);
       });
@@ -105,7 +106,7 @@ export default function ProjectBoard({ currentUser, employees, projects }: Proje
 
   // Employees registered in this project (with robust matching), excluding the administrator
   const projectMembers = selectedProject 
-    ? employees.filter(emp => emp.role !== "admin" && selectedProject.members.some(m => {
+    ? employees.filter(emp => emp.role !== "admin" && emp.role !== "client" && selectedProject.members.some(m => {
         const cleanM = m.trim().toLowerCase();
         const empM = (emp.email || "").trim().toLowerCase();
         return cleanM === empM || m === emp.phone;
@@ -1276,6 +1277,52 @@ function TaskCard({ task, project, employees, onStatusChange, formatFileSize, cu
           )}
         </div>
       </div>
+
+      {/* Push Task / Delegate to another Employee */}
+      {!isCompleted && (isAssignee || currentUser.role === 'admin') && (
+        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between gap-1.5 animate-fade-in bg-slate-50/50 p-1.5 rounded-lg">
+          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 shrink-0">
+            <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-500 shrink-0" /> Push Task:
+          </span>
+          <select
+            onChange={async (e) => {
+              const targetVal = e.target.value;
+              if (!targetVal) return;
+              if (window.confirm(`Are you sure you want to push/reassign this task?`)) {
+                try {
+                  const response = await fetch(`/api/tasks/${task.id}/reassign`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      assignedTo: targetVal,
+                      operatorPhone: currentUser.phone,
+                      operatorName: currentUser.name
+                    })
+                  });
+                  if (response.ok) {
+                    alert("Task successfully pushed.");
+                  } else {
+                    const errData = await response.json();
+                    alert(errData.error || "Failed to push task.");
+                  }
+                } catch (err) {
+                  alert("Network error. Failed to push task.");
+                }
+              }
+              e.target.value = ""; // reset dropdown
+            }}
+            className="px-2 py-1 bg-white border border-slate-200 hover:bg-slate-50 rounded text-[10px] font-bold text-indigo-600 focus:ring-1 focus:ring-indigo-500 max-w-[140px] cursor-pointer"
+          >
+            <option value="">Select Employee...</option>
+            {employees
+              .filter(emp => emp.role === 'employee' && emp.phone !== task.assignedTo)
+              .map(emp => (
+                <option key={emp.phone} value={emp.phone}>{emp.name}</option>
+              ))
+            }
+          </select>
+        </div>
+      )}
 
       <div className="text-[9px] text-slate-400 flex items-center justify-between mt-1 pt-1.5 border-t border-dashed border-slate-100">
         <span>By: {creator ? creator.name : "Admin"}</span>

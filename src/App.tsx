@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
-import {
-  FolderKanban,
-  Users,
-  TrendingUp,
-  LogOut,
-  User,
-  ShieldAlert,
-  Menu,
+import { 
+  FolderKanban, 
+  Users, 
+  TrendingUp, 
+  LogOut, 
+  User, 
+  ShieldAlert, 
+  Menu, 
   X,
   Lock,
   Phone,
@@ -14,15 +14,16 @@ import {
   Building2,
   History,
   Key,
-  AlertCircle
+  AlertCircle,
+  Calendar
 } from "lucide-react";
 import { Employee, Project } from "./types";
-import { subscribeEmployees, subscribeProjects } from "./lib/dbService";
-import { supabase } from "./lib/supabaseClient";
+import { subscribeEmployees, subscribeProjects, seedAdminUser } from "./lib/dbService";
 import Login from "./components/Login";
 import ProjectBoard from "./components/ProjectBoard";
 import AdminPanel from "./components/AdminPanel";
 import ProgressTracker from "./components/ProgressTracker";
+import AttendanceManager from "./components/AttendanceManager";
 import { motion, AnimatePresence } from "motion/react";
 
 export default function App() {
@@ -30,86 +31,27 @@ export default function App() {
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [activeTab, setActiveTab] = useState<'board' | 'progress' | 'employees' | 'projects' | 'logs'>('board');
+  const [activeTab, setActiveTab] = useState<'board' | 'progress' | 'employees' | 'projects' | 'logs' | 'attendance'>('board');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  // Initialize auth state from Supabase session on mount
-  useEffect(() => {
-    const initializeAuth = async () => {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (session?.user) {
-        // Fetch employee profile
-        const { data: profile } = await supabase
-          .from("employees")
-          .select("*")
-          .eq("id", session.user.id)
-          .single();
-
-        if (profile) {
-          const employee: Employee = {
-            id: profile.id,
-            name: profile.name,
-            email: profile.email,
-            phone: profile.phone || "",
-            designation: profile.designation || "",
-            role: profile.role,
-          };
-          setCurrentUser(employee);
-          setActiveTab(employee.role === 'admin' ? 'progress' : 'board');
-        }
-      }
-    };
-
-    initializeAuth();
-
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        // Fetch employee profile
-        const { data: profile } = await supabase
-          .from("employees")
-          .select("*")
-          .eq("id", session.user.id)
-          .single();
-
-        if (profile) {
-          const employee: Employee = {
-            id: profile.id,
-            name: profile.name,
-            email: profile.email,
-            phone: profile.phone || "",
-            designation: profile.designation || "",
-            role: profile.role,
-          };
-          setCurrentUser(employee);
-          if (event === 'SIGNED_IN') {
-            setActiveTab(employee.role === 'admin' ? 'progress' : 'board');
-          }
-        }
-      } else {
-        setCurrentUser(null);
-      }
-    });
-
-    return () => {
-      subscription?.unsubscribe();
-    };
-  }, []);
 
   // Handle successful login
   const handleLoginSuccess = (user: Employee) => {
     setCurrentUser(user);
-    setActiveTab(user.role === 'admin' ? 'progress' : 'board');
+    if (user.role === 'admin') {
+      setActiveTab('progress');
+    } else {
+      setActiveTab('board');
+    }
   };
 
   // Handle Logout
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+  const handleLogout = () => {
     setCurrentUser(null);
   };
 
   // Change Password state
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
@@ -122,31 +64,47 @@ export default function App() {
     setChangePasswordSuccess(null);
 
     if (newPassword !== confirmPassword) {
-      setChangePasswordError("New passwords do not match.");
+      setChangePasswordError("New PINs do not match.");
       return;
     }
 
-    if (newPassword.length < 4) {
-      setChangePasswordError("Password must be at least 4 characters long.");
+    if (!/^[0-9]{6}$/.test(newPassword)) {
+      setChangePasswordError("The new PIN must be exactly 6 numeric digits.");
       return;
     }
 
     setChangePasswordLoading(true);
 
     try {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: currentUser?.email,
+          currentPassword,
+          newPassword
+        })
+      });
 
-      if (error) {
-        setChangePasswordError(error.message || "Failed to update password.");
-      } else {
-        setChangePasswordSuccess("Password updated successfully!");
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setChangePasswordSuccess("PIN updated successfully!");
+        setCurrentPassword("");
         setNewPassword("");
         setConfirmPassword("");
+        
+        // Also update local state if user updated current session info
+        if (currentUser) {
+          const updatedUser = { ...currentUser, password: newPassword };
+          setCurrentUser(updatedUser);
+        }
 
         setTimeout(() => {
           setShowChangePasswordModal(false);
           setChangePasswordSuccess(null);
         }, 1500);
+      } else {
+        setChangePasswordError(data.error || "Failed to update PIN.");
       }
     } catch (err: any) {
       setChangePasswordError(err.message || "Failed to connect to server.");
@@ -294,6 +252,20 @@ export default function App() {
               </button>
             </>
           )}
+
+          {(isUserAdmin || currentUser.role === 'employee') && (
+            <button
+              onClick={() => setActiveTab('attendance')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-xs transition-all cursor-pointer ${
+                activeTab === 'attendance'
+                  ? 'bg-indigo-50 text-indigo-700'
+                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              <Calendar className="w-4 h-4" />
+              Attendance Desk
+            </button>
+          )}
         </nav>
 
         {/* User Info Section */}
@@ -311,6 +283,7 @@ export default function App() {
                 onClick={() => {
                   setChangePasswordError(null);
                   setChangePasswordSuccess(null);
+                  setCurrentPassword("");
                   setNewPassword("");
                   setConfirmPassword("");
                   setShowChangePasswordModal(true);
@@ -443,6 +416,16 @@ export default function App() {
                   </button>
                 </>
               )}
+              {(isUserAdmin || currentUser.role === 'employee') && (
+                <button
+                  onClick={() => { setActiveTab('attendance'); setIsMobileMenuOpen(false); }}
+                  className={`w-full text-left px-4 py-3 text-xs font-bold rounded-xl flex items-center gap-2 ${
+                    activeTab === 'attendance' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600'
+                  }`}
+                >
+                  <Calendar className="w-4 h-4" /> Attendance Desk
+                </button>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -496,6 +479,12 @@ export default function App() {
                   mode="logs"
                 />
               )}
+              {activeTab === 'attendance' && (isUserAdmin || currentUser.role === 'employee') && (
+                <AttendanceManager 
+                  currentUser={currentUser} 
+                  employees={employees} 
+                />
+              )}
             </motion.div>
           </AnimatePresence>
         </section>
@@ -524,7 +513,7 @@ export default function App() {
                 <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
                   <div className="flex items-center gap-2">
                     <Key className="w-4 h-4 text-indigo-600" />
-                    <h3 className="text-base font-extrabold text-slate-900 font-display">Change Your Password</h3>
+                    <h3 className="text-base font-extrabold text-slate-900 font-display">Change Your Login PIN</h3>
                   </div>
                   <button
                     onClick={() => setShowChangePasswordModal(false)}
@@ -550,26 +539,47 @@ export default function App() {
                   )}
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">New Password</label>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Current PIN</label>
                     <input
                       type="password"
                       required
-                      placeholder="At least 4 characters long"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium text-slate-800"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={6}
+                      placeholder="Enter current 6-digit PIN"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value.replace(/[^0-9]/g, ""))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-bold font-mono text-slate-800 tracking-widest"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Confirm New Password</label>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">New 6-Digit PIN</label>
                     <input
                       type="password"
                       required
-                      placeholder="Repeat new password"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={6}
+                      placeholder="Enter exactly 6 digits"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value.replace(/[^0-9]/g, ""))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-bold font-mono text-slate-800 tracking-widest"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Confirm New PIN</label>
+                    <input
+                      type="password"
+                      required
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={6}
+                      placeholder="Confirm new 6-digit PIN"
                       value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium text-slate-800"
+                      onChange={(e) => setConfirmPassword(e.target.value.replace(/[^0-9]/g, ""))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-bold font-mono text-slate-800 tracking-widest"
                     />
                   </div>
 
@@ -586,7 +596,7 @@ export default function App() {
                       disabled={changePasswordLoading}
                       className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-md transition-all flex items-center gap-1.5 disabled:opacity-50"
                     >
-                      {changePasswordLoading ? "Updating..." : "Update Password"}
+                      {changePasswordLoading ? "Updating..." : "Update PIN"}
                     </button>
                   </div>
                 </form>

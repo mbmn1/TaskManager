@@ -4,8 +4,9 @@ export interface Employee {
   email: string;
   phone: string;
   designation: string;
-  role: 'admin' | 'employee';
+  role: 'admin' | 'employee' | 'client';
   password?: string;
+  trackAttendance?: boolean;
 }
 
 export interface Project {
