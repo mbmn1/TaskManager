@@ -64,6 +64,25 @@ async function runSupabaseMigrations() {
     await client.connect();
     console.log("Connected to Supabase PostgreSQL database. Verification and migrations started...");
 
+    // Pre-check: If legacy employees.id was a UUID (from an old schema or preset), drop the old tables 
+    // to perform a clean text-primary-key reset so that non-UUID primary keys work.
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'employees' AND column_name = 'id' AND data_type = 'uuid'
+        ) THEN
+          DROP TABLE IF EXISTS attendance CASCADE;
+          DROP TABLE IF EXISTS logs CASCADE;
+          DROP TABLE IF EXISTS notifications CASCADE;
+          DROP TABLE IF EXISTS tasks CASCADE;
+          DROP TABLE IF EXISTS projects CASCADE;
+          DROP TABLE IF EXISTS employees CASCADE;
+        END IF;
+      END $$;
+    `);
+
     // 1. Create employees table
     await client.query(`
       CREATE TABLE IF NOT EXISTS employees (
