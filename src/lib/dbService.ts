@@ -86,8 +86,8 @@ export const updateProjectMembers = async (projectId: string, members: string[])
 };
 
 // Delete employee (Admin action)
-export const deleteEmployee = async (email: string) => {
-  const res = await fetch(`/api/employees/${encodeURIComponent(email)}`, {
+export const deleteEmployee = async (phone: string) => {
+  const res = await fetch(`/api/employees/${encodeURIComponent(phone)}`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" }
   });

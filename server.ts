@@ -368,9 +368,10 @@ class DBWrapper {
 
           const docs = (data || []).map((item: any) => {
             const rawId = (name === "employees" && item.phone) ? item.phone : (item.id || "");
+            const mappedItem = { ...item, id: rawId };
             return {
               id: rawId,
-              data: () => item
+              data: () => mappedItem
             };
           });
 
@@ -393,7 +394,7 @@ class DBWrapper {
     return {
       doc(docId?: string) {
         const rawId = docId || Math.random().toString(36).substring(2, 15);
-        const id = toUUID(rawId);
+        const id = (name === "employees") ? toUUID(rawId) : rawId;
         return {
           id: rawId,
           async get() {
@@ -412,10 +413,11 @@ class DBWrapper {
                 }
                 throw error;
               }
+              const mappedData = data ? { ...data, id: (name === "employees" && data.phone) ? data.phone : (data.id || rawId) } : null;
               return {
                 exists: !!data,
                 id: rawId,
-                data: () => data || null
+                data: () => mappedData
               };
             } catch (err: any) {
               console.error(`Supabase get doc failed on '${name}/${id}':`, err.message);
@@ -941,7 +943,7 @@ app.use((req, res, next) => {
       const pass = (password || "").toString().trim();
 
       if (!input || !pass) {
-        return res.status(400).json({ error: "Email/Phone and Password are required." });
+        return res.status(400).json({ error: "Mobile Number and PIN are required." });
       }
 
       const inputNormalized = input.toLowerCase();
@@ -949,12 +951,7 @@ app.use((req, res, next) => {
       // Search for employee by email or phone
       let matchedEmployee: any = null;
       
-      // 1. Check by ID (which is lowercase email) or direct email field
-      const empRef = db.collection("employees").doc(inputNormalized);
-      const empSnap = await empRef.get();
-      if (empSnap.exists) {
-        matchedEmployee = empSnap.data();
-      } else {
+      if (inputNormalized.includes("@")) {
         // Query by email
         const emailSnap = await db.collection("employees").where("email", "==", inputNormalized).get();
         if (!emailSnap.empty) {
@@ -962,17 +959,22 @@ app.use((req, res, next) => {
             matchedEmployee = doc.data();
           });
         }
-      }
-
-      // 2. Query by phone if not found
-      if (!matchedEmployee) {
-        const cleanedPhone = input.replace(/[^0-9]/g, "");
+      } else {
+        const cleanedPhone = inputNormalized.replace(/[^0-9]/g, "");
         if (cleanedPhone) {
-          const phoneSnap = await db.collection("employees").where("phone", "==", cleanedPhone).get();
-          if (!phoneSnap.empty) {
-            phoneSnap.forEach((doc: any) => {
-              matchedEmployee = doc.data();
-            });
+          // 1. Try document ID first (which is primary phone)
+          const empRef = db.collection("employees").doc(cleanedPhone);
+          const empSnap = await empRef.get();
+          if (empSnap.exists) {
+            matchedEmployee = empSnap.data();
+          } else {
+            // 2. Query by phone field fallback
+            const phoneSnap = await db.collection("employees").where("phone", "==", cleanedPhone).get();
+            if (!phoneSnap.empty) {
+              phoneSnap.forEach((doc: any) => {
+                matchedEmployee = doc.data();
+              });
+            }
           }
         }
       }
@@ -981,10 +983,10 @@ app.use((req, res, next) => {
         return res.status(404).json({ error: "User is not registered in the system. Please ask Admin to add you." });
       }
 
-      // Check password
+      // Check PIN (stored in .password column for backwards compatibility)
       const dbPassword = matchedEmployee.password || "123456"; // default fallback for pre-existing accounts
       if (pass !== dbPassword) {
-        return res.status(400).json({ error: "Incorrect password. Please try again." });
+        return res.status(400).json({ error: "Incorrect PIN. Please try again." });
       }
 
       return res.json({
@@ -1001,30 +1003,32 @@ app.use((req, res, next) => {
   app.post("/api/auth/change-password", async (req, res) => {
     try {
       const { email, currentPassword, newPassword } = req.body;
-      if (!email || !newPassword) {
+      const identifier = (email || "").toString().trim();
+      if (!identifier || !newPassword) {
         return res.status(400).json({ error: "Identifier and new PIN are required." });
       }
 
-      const emailNormalized = email.trim().toLowerCase();
-      
-      let empRef = db.collection("employees").doc(emailNormalized);
-      let docSnap = await empRef.get();
+      let empRef: any = null;
       let employeeData: any = null;
-      
-      if (docSnap.exists) {
-        employeeData = docSnap.data();
-      } else {
-        // Query by email field
+
+      if (identifier.includes("@")) {
+        const emailNormalized = identifier.toLowerCase();
         const emailSnap = await db.collection("employees").where("email", "==", emailNormalized).get();
         if (!emailSnap.empty) {
           emailSnap.forEach((doc: any) => {
             empRef = db.collection("employees").doc(doc.id);
             employeeData = doc.data();
           });
-        } else {
-          // Try query by phone
-          const cleanedPhone = emailNormalized.replace(/[^0-9]/g, "");
-          if (cleanedPhone) {
+        }
+      } else {
+        const cleanedPhone = identifier.replace(/[^0-9]/g, "");
+        if (cleanedPhone) {
+          const directRef = db.collection("employees").doc(cleanedPhone);
+          const directSnap = await directRef.get();
+          if (directSnap.exists) {
+            empRef = directRef;
+            employeeData = directSnap.data();
+          } else {
             const phoneSnap = await db.collection("employees").where("phone", "==", cleanedPhone).get();
             if (!phoneSnap.empty) {
               phoneSnap.forEach((doc: any) => {
@@ -1035,19 +1039,18 @@ app.use((req, res, next) => {
           }
         }
       }
-      
-      if (!employeeData) {
+
+      if (!employeeData || !empRef) {
         return res.status(404).json({ error: "Employee profile not found." });
       }
-      
+
       const dbPassword = employeeData.password || "123456"; // Default password fallback
-      
       const isCurrentCorrect = currentPassword === dbPassword;
         
       if (!isCurrentCorrect) {
         return res.status(400).json({ error: "Incorrect current PIN." });
       }
-      
+
       await empRef.update({ password: newPassword });
       res.json({ success: true, message: "PIN updated successfully!" });
     } catch (err: any) {

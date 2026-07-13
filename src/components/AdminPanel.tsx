@@ -181,13 +181,20 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
       return;
     }
 
+    const pin = empPassword ? empPassword.trim() : "123456";
+    if (pin.length !== 6 || !/^\d+$/.test(pin)) {
+      setEmpError("PIN must be exactly a 6-digit numeric code.");
+      setEmpLoading(false);
+      return;
+    }
+
     try {
       await addEmployee({
         name: empName,
         email: emailNormalized,
         phone: normalizedPhone,
         designation: empDesignation,
-        password: empPassword || "123456",
+        password: pin,
         role: empRole,
         trackAttendance: empRole === 'employee' ? empTrackAttendance : false
       });
@@ -246,13 +253,20 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
     setEditEmpLoading(true);
     setEditEmpError(null);
 
+    const pin = editEmpPassword ? editEmpPassword.trim() : "123456";
+    if (pin.length !== 6 || !/^\d+$/.test(pin)) {
+      setEditEmpError("PIN must be exactly a 6-digit numeric code.");
+      setEditEmpLoading(false);
+      return;
+    }
+
     try {
       const res = await updateEmployee(editingEmployee.phone, {
         name: editEmpName,
         email: editEmpEmail.trim().toLowerCase(),
         designation: editEmpDesignation,
         role: editEmpRole,
-        password: editEmpPassword,
+        password: pin,
         trackAttendance: editEmpRole === 'employee' ? editEmpTrackAttendance : false
       });
       if (res && res.error) {
@@ -435,13 +449,17 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Login Password</label>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">6-Digit PIN</label>
                   <input
                     type="text"
-                    placeholder="Enter password"
+                    required
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    placeholder="e.g. 123456"
                     value={empPassword}
-                    onChange={(e) => setEmpPassword(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-semibold placeholder-slate-400 text-slate-800"
+                    onChange={(e) => setEmpPassword(e.target.value.replace(/[^0-9]/g, ""))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-bold font-mono tracking-widest text-slate-800"
                   />
                 </div>
 
@@ -1001,14 +1019,17 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
                   )}
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Change / Update Password</label>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Change / Update 6-Digit PIN</label>
                     <input
                       type="text"
                       required
-                      placeholder="Enter new password"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={6}
+                      placeholder="Enter exactly 6 digits"
                       value={editEmpPassword}
-                      onChange={(e) => setEditEmpPassword(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-medium text-slate-800"
+                      onChange={(e) => setEditEmpPassword(e.target.value.replace(/[^0-9]/g, ""))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-bold font-mono tracking-widest text-slate-800"
                     />
                   </div>
 
