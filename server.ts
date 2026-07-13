@@ -501,19 +501,33 @@ class DBWrapper {
 }
 
 const db = new DBWrapper();
-if (process.env.VERCEL) {
-  console.log("Running in serverless environment (Vercel). Skipping automatic schema migration on boot.");
-  if (supabase) {
-    db.testSupabase().catch(err => console.warn("Supabase initial check skipped or failed:", err.message));
-  }
-} else {
-  runSupabaseMigrations()
-    .then(() => {
-      db.testSupabase();
-    })
-    .catch((err) => {
-      console.error("Critical error in runSupabaseMigrations on startup:", err);
-    });
+
+let migrationsPromise: Promise<void> | null = null;
+
+async function ensureMigrations() {
+  if (migrationsPromise) return migrationsPromise;
+
+  migrationsPromise = (async () => {
+    try {
+      console.log("Verifying database schema and migrations...");
+      await runSupabaseMigrations();
+      if (supabase) {
+        await db.testSupabase().catch(err => console.warn("Supabase initial check skipped or failed:", err.message));
+      }
+    } catch (err) {
+      console.error("Auto-migration failed:", err);
+      migrationsPromise = null; // reset to allow retrying
+    }
+  })();
+
+  return migrationsPromise;
+}
+
+// On local dev / non-Vercel environment, run migrations immediately on boot
+if (!process.env.VERCEL) {
+  ensureMigrations().catch(err => {
+    console.error("Initial boot migrations failed:", err);
+  });
 }
 
 // Lazy initialization of Gemini client
@@ -569,6 +583,18 @@ app.use((req, res, next) => {
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
     res.setHeader("Surrogate-Control", "no-store");
+  }
+  next();
+});
+
+// Middleware to lazily run database schema migrations on demand (vital for Vercel Serverless cold-starts)
+app.use(async (req, res, next) => {
+  if (req.url.startsWith("/api/")) {
+    try {
+      await ensureMigrations();
+    } catch (err) {
+      console.error("Migration middleware error:", err);
+    }
   }
   next();
 });
@@ -1614,8 +1640,8 @@ app.use((req, res, next) => {
     }
   }
 
-  // Run local server listener if we are in local container development/production, or not on Vercel
-  if (!process.env.VERCEL || process.env.NODE_ENV !== "production") {
+  // Run local server listener if we are NOT on Vercel
+  if (!process.env.VERCEL) {
     runLocalServer().catch(err => {
       console.error("Failed to start server:", err);
     });
