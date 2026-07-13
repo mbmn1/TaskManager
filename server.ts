@@ -41,6 +41,23 @@ function sanitizeDatabaseUrl(url: string): string {
   }
 }
 
+// Convert any string to a deterministic valid UUIDv4-like string using md5 hash
+function toUUID(str: string): string {
+  if (!str) return str;
+  // If it's already a valid UUID format, return it
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str)) {
+    return str.toLowerCase();
+  }
+  const hash = crypto.createHash("md5").update(str.toLowerCase().trim()).digest("hex");
+  const part1 = hash.substring(0, 8);
+  const part2 = hash.substring(8, 12);
+  const part3 = "4" + hash.substring(13, 16); // force version 4
+  const part4 = "8" + hash.substring(17, 20); // force variant 8
+  const part5 = hash.substring(20, 32);
+  return `${part1}-${part2}-${part3}-${part4}-${part5}`;
+}
+
+
 // Automatic Supabase Table Schema & Seed Bootstrapper
 async function runSupabaseMigrations() {
   const rawDbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
@@ -219,10 +236,11 @@ async function runSupabaseMigrations() {
     const adminCount = parseInt(adminCheck.rows[0].count, 10);
     if (adminCount === 0) {
       console.log("No administrator accounts found in Supabase. Seeding default Admin user...");
+      const adminId = toUUID('9848884897');
       await client.query(`
         INSERT INTO employees (id, name, email, phone, designation, role, password, "trackAttendance")
-        VALUES ('9848884897', 'Admin', 'Innovalleyservices@gmail.com', '9848884897', 'Administrator', 'admin', '123456', false);
-      `);
+        VALUES ($1, 'Admin', 'Innovalleyservices@gmail.com', '9848884897', 'Administrator', 'admin', '123456', false);
+      `, [adminId]);
       console.log("Default Admin user (Admin, 9848884897) seeded successfully in Supabase.");
     } else {
       console.log("Supabase already has an administrator account. Skipping auto-seeding.");
@@ -348,10 +366,13 @@ class DBWrapper {
             throw error;
           }
 
-          const docs = (data || []).map((item: any) => ({
-            id: item.id || "",
-            data: () => item
-          }));
+          const docs = (data || []).map((item: any) => {
+            const rawId = (name === "employees" && item.phone) ? item.phone : (item.id || "");
+            return {
+              id: rawId,
+              data: () => item
+            };
+          });
 
           return {
             empty: docs.length === 0,
@@ -371,19 +392,29 @@ class DBWrapper {
 
     return {
       doc(docId?: string) {
-        const id = docId || Math.random().toString(36).substring(2, 15);
+        const rawId = docId || Math.random().toString(36).substring(2, 15);
+        const id = toUUID(rawId);
         return {
-          id,
+          id: rawId,
           async get() {
             if (!supabase) {
               throw new Error("Supabase is not connected!");
             }
             try {
               const { data, error } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
-              if (error) throw error;
+              if (error) {
+                if (error.code === "22P02" || (error.message && error.message.includes("invalid input syntax for type uuid"))) {
+                  return {
+                    exists: false,
+                    id: rawId,
+                    data: () => null
+                  };
+                }
+                throw error;
+              }
               return {
                 exists: !!data,
-                id,
+                id: rawId,
                 data: () => data || null
               };
             } catch (err: any) {
