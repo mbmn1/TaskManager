@@ -39,7 +39,7 @@ export default function AdminPanel({ currentUser, employees, projects, mode }: A
   // Subscribe to all tasks to track completed tasks per project
   const [allTasks, setAllTasks] = useState<Task[]>([]);
   useEffect(() => {
-    const unsubscribe = subscribeAllTasks(currentUser.email || "", currentUser.role || "", (tasks) => {
+    const unsubscribe = subscribeAllTasks(currentUser.email || "", currentUser.phone || "", currentUser.role || "", (tasks) => {
       setAllTasks(tasks);
     });
     return () => unsubscribe();

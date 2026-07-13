@@ -59,9 +59,9 @@ function toUUID(str: string): string {
 
 // Automatic Supabase Table Schema & Seed Bootstrapper
 async function runSupabaseMigrations() {
-  const rawDbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+  const rawDbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || process.env.POSTGRES_URL || process.env.POSTGRES_URL_NON_POOLING;
   if (!rawDbUrl) {
-    console.warn("No DATABASE_URL or SUPABASE_DB_URL found. Skipping automatic schema migration.");
+    console.warn("No DATABASE_URL, SUPABASE_DB_URL, or POSTGRES_URL found. Skipping automatic schema migration.");
     return;
   }
   
@@ -1320,7 +1320,8 @@ app.use(async (req, res, next) => {
   app.get("/api/tasks", async (req, res) => {
     try {
       const { projectId, userPhone, userEmail, role } = req.query;
-      const targetEmail = (userEmail || userPhone || "").toString().trim().toLowerCase();
+      const targetEmail = (userEmail || "").toString().trim().toLowerCase();
+      const targetPhone = (userPhone || "").toString().trim().replace(/[^0-9]/g, "");
       let snapshot;
       
       const isActuallyAdmin = role === "admin";
@@ -1336,13 +1337,21 @@ app.use(async (req, res, next) => {
         list.push({ id: doc.id, ...doc.data() });
       });
 
-      // Filter tasks based on role and email
+      // Filter tasks based on role and email/phone
       let filteredList = list;
-      if (!isActuallyAdmin && targetEmail) {
-        filteredList = list.filter(t => 
-          (t.assignedTo && t.assignedTo.trim().toLowerCase() === targetEmail) || 
-          (t.assignedBy && t.assignedBy.trim().toLowerCase() === targetEmail)
-        );
+      if (!isActuallyAdmin) {
+        filteredList = list.filter(t => {
+          const assignedToVal = (t.assignedTo || "").toString().trim();
+          const assignedByVal = (t.assignedBy || "").toString().trim();
+          
+          const matchTo = (targetEmail && assignedToVal.toLowerCase() === targetEmail) ||
+                          (targetPhone && assignedToVal.replace(/[^0-9]/g, "") === targetPhone);
+                          
+          const matchBy = (targetEmail && assignedByVal.toLowerCase() === targetEmail) ||
+                          (targetPhone && assignedByVal.replace(/[^0-9]/g, "") === targetPhone);
+                          
+          return matchTo || matchBy;
+        });
       }
 
       // Filter out completed tasks older than 5 days

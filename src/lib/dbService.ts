@@ -133,10 +133,10 @@ export const updateProject = async (projectId: string, project: { name?: string,
 };
 
 // Listen to tasks for a specific project
-export const subscribeTasks = (projectId: string, userEmail: string, userRole: string, callback: (tasks: Task[]) => void) => {
+export const subscribeTasks = (projectId: string, userEmail: string, userPhone: string, userRole: string, callback: (tasks: Task[]) => void) => {
   const fetchTasks = async () => {
     try {
-      const res = await fetch(`/api/tasks?projectId=${projectId}&userEmail=${encodeURIComponent(userEmail)}&role=${userRole}`);
+      const res = await fetch(`/api/tasks?projectId=${projectId}&userEmail=${encodeURIComponent(userEmail)}&userPhone=${encodeURIComponent(userPhone)}&role=${userRole}`);
       if (res.ok) {
         const data = await res.json();
         callback(data);
@@ -152,10 +152,10 @@ export const subscribeTasks = (projectId: string, userEmail: string, userRole: s
 };
 
 // Subscribe to all tasks (for general statistics and tracking)
-export const subscribeAllTasks = (userEmail: string, userRole: string, callback: (tasks: Task[]) => void) => {
+export const subscribeAllTasks = (userEmail: string, userPhone: string, userRole: string, callback: (tasks: Task[]) => void) => {
   const fetchAllTasks = async () => {
     try {
-      const res = await fetch(`/api/tasks?userEmail=${encodeURIComponent(userEmail)}&role=${userRole}`);
+      const res = await fetch(`/api/tasks?userEmail=${encodeURIComponent(userEmail)}&userPhone=${encodeURIComponent(userPhone)}&role=${userRole}`);
       if (res.ok) {
         const data = await res.json();
         callback(data);
