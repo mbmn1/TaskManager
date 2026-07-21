@@ -413,7 +413,7 @@ class DBWrapper {
           throw new Error("Supabase is not connected!");
         }
         try {
-          let query = supabase.from(name).select("*");
+          let query = supabase.from(name).select(); // Using .select() without args is equivalent to select('*')
           
           for (const filter of this.filters) {
             const { field, op, val } = filter;
@@ -474,7 +474,7 @@ class DBWrapper {
               throw new Error("Supabase is not connected!");
             }
             try {
-              const { data, error } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
+              const { data, error } = await supabase.from(name).select().eq("id", id).maybeSingle();
               if (error) {
                 if (error.code === "22P02" || (error.message && error.message.includes("invalid input syntax for type uuid"))) {
                   return {
@@ -506,7 +506,7 @@ class DBWrapper {
             try {
               let mergedData = { ...data };
               if (isMerge) {
-                const { data: existing, error: getErr } = await supabase.from(name).select("*").eq("id", id).maybeSingle();
+                const { data: existing, error: getErr } = await supabase.from(name).select('id').eq("id", id).maybeSingle();
                 if (getErr) throw getErr;
                 if (existing) {
                   mergedData = { ...existing, ...data };
@@ -1738,7 +1738,7 @@ async function runLocalServer() {
 // On Vercel, it just defines the API routes and exports the 'app'.
 // Locally, it starts a full development server.
 if (!process.env.VERCEL) {
-  startDevServer().catch(err => {
+  runLocalServer().catch(err => {
     console.error("Failed to start server:", err);
   });
 } else {

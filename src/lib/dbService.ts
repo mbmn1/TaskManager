@@ -241,7 +241,7 @@ export const updateTaskStatus = async (
       updaterName: updater.name,
       previousStatus,
       newStatus,
-      actionType: 'status_change',
+      actionType: "status_change",
       description: `Status changed from ${previousStatus} to ${newStatus} by ${updater.name}`,
       projectId: project.id,
       recipientRole: recipient.role
