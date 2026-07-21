@@ -60,7 +60,7 @@ function toUUID(str: string): string {
 // Automatic Supabase Table Schema & Seed Bootstrapper
 async function runSupabaseMigrations() {
   dotenv.config(); // Ensure env vars are loaded
-  const rawDbUrl = process.env.DIRECT_URL || process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || process.env.POSTGRES_URL || process.env.POSTGRES_URL_NON_POOLING;
+  const rawDbUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL;
   if (!rawDbUrl) {
     console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
     console.error("!!! CRITICAL: DATABASE_URL NOT FOUND IN .env FILE                   !!!");
@@ -774,76 +774,6 @@ function defineApiRoutes() {
       res.status(500).json({ error: err.message });
     }
   });
-
-
-  interface AttendanceRecord {
-    id: string;
-    employee_id: string;
-    employee_name?: string;
-    date: string;
-    punch_in: string;
-    punch_out: string | null;
-    status: string;
-    total_hours: string | null;
-    notes: string;
-  }
-
-  interface AttendancePunchInRequestBody {
-    employee_id: string;
-    employee_name?: string;
-    date: string;
-    punch_in: string;
-    notes?: string;
-  }
-
-  interface AttendancePunchOutRequestBody {
-    employee_id: string;
-    date: string;
-    punch_out: string;
-    total_hours?: string;
-    notes?: string;
-  }
-
-  interface AttendanceQueryParams {
-    employee_id?: string;
-    date?: string;
-  }
-
-  interface TaskReassignRequestBody {
-    assignedTo: string;
-    operatorPhone?: string;
-    operatorName?: string;
-  }
-
-  interface TaskData {
-    assignedTo: string;
-    projectId?: string;
-    title: string;
-  }
-
-  // GET Attendance logs (Admin or Employee query)
-  app.get("/api/attendance", async (req: express.Request<{}, unknown, unknown, AttendanceQueryParams>, res: express.Response) => {
-    try {
-      const { employee_id, date } = req.query;
-      let ref: any = db.collection("attendance");
-      if (employee_id) {
-        ref = ref.where("employee_id", "==", employee_id.toString());
-      }
-      if (date) {
-        ref = ref.where("date", "==", date.toString());
-      }
-      const snapshot = await ref.get();
-      const list: AttendanceRecord[] = [];
-      snapshot.forEach((doc: any) => {
-        list.push({ id: doc.id, ...doc.data() });
-      });
-      res.json(list);
-    } catch (err: any) {
-      console.error("Error listing attendance logs on server:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
 
   interface AttendanceRecord {
     id: string;
