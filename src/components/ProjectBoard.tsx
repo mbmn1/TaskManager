@@ -997,7 +997,7 @@ function TaskCard({ task, project, employees, onStatusChange, formatFileSize, cu
                         className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 shadow-sm"
                       >
                         <Download className="w-3.5 h-3.5" />
-                        Download Image (Optional)
+                        Download
                       </button>
                     </div>
                   </motion.div>
