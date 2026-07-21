@@ -280,6 +280,15 @@ async function runSupabaseMigrations() {
   }
 }
 
+// Export a dedicated function for Vercel's build process to run migrations
+export async function runMigrationsForBuild() {
+  console.log("Build process detected. Running database migrations...");
+  await runSupabaseMigrations();
+  console.log("Migrations complete. Exiting build script.");
+  // process.exit is important to signal Vercel that the script is done
+  process.exit(0);
+}
+
 
 // Initialize Supabase if keys are provided
 const supabaseUrl = process.env.SUPABASE_URL || "";
@@ -1718,31 +1727,21 @@ async function runLocalServer() {
     });
   }
 
-  // 4. Start the Express server only after migrations and routes are set up
-  if (!process.env.VERCEL) {
-    const initialPort = 3000;
-    let port = initialPort;
-    const server = app.listen(port, "0.0.0.0", () => {
-      console.log("Express server started.");
-      console.log(`Server running on http://localhost:${port}`);
-    }).on('error', (err: any) => {
-      if (err.code === 'EADDRINUSE') {
-        console.warn(`Port ${port} is in use, trying another port...`);
-        setTimeout(() => {
-          server.close();
-          port++;
-          server.listen(port, "0.0.0.0");
-        }, 100);
-      } else {
-        console.error("Server startup error:", err);
-      }
-    });
-  }
+  // Start the Express server
+  const port = process.env.PORT || 3000;
+  app.listen(port, () => {
+    console.log(`Server running on http://localhost:${port}`);
+  });
 }
 
-// Run local server listener if we are NOT on Vercel
+// This logic determines how the server starts.
+// On Vercel, it just defines the API routes and exports the 'app'.
+// Locally, it starts a full development server.
 if (!process.env.VERCEL) {
-  runLocalServer().catch(err => {
+  startDevServer().catch(err => {
     console.error("Failed to start server:", err);
   });
+} else {
+  // On Vercel, just define the routes. Vercel handles the rest.
+  defineApiRoutes();
 }
