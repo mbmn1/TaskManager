@@ -1,0 +1,6 @@
+{
+  "name": "Innovalley",
+  "description": "Innovalley is a secure, comprehensive project and task workspace portal, designed for managing team task boards, employee directories, progress metrics, and administrative project workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

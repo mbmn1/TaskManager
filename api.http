@@ -1,0 +1,17 @@
+### Test health check
+GET http://localhost:3000/api/health
+
+### Test login
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{
+    "identifier": "Innovalleyservices@gmail.com",
+    "password": "123456"
+}
+
+### Test seed
+POST http://localhost:3000/api/employees/seed
+Content-Type: application/json
+
+{}
