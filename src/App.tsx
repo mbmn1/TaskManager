@@ -216,6 +216,32 @@ export default function App() {
     }
   }, [currentUser]);
 
+  // Effect to handle closing notifications dropdown
+  useEffect(() => {
+    if (!showNotificationsDropdown) return;
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      const dropdown = document.getElementById('notifications-dropdown-menu');
+      const button = document.getElementById('notifications-bell-btn');
+      if (dropdown && !dropdown.contains(event.target as Node) && button && !button.contains(event.target as Node)) {
+        setShowNotificationsDropdown(false);
+      }
+    };
+
+    const handleEscapeKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowNotificationsDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscapeKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscapeKey);
+    };
+  }, [showNotificationsDropdown]);
+
   if (!currentUser) {
     return <Login onLoginSuccess={handleLoginSuccess} />;
   }

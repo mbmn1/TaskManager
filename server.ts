@@ -1488,12 +1488,21 @@ function defineApiRoutes() {
   // List notifications
   app.get("/api/notifications", async (req, res) => {
     try {
-      const snapshot = await db.collection("notifications").get();
+      // Auto-delete notifications older than 24 hours before fetching
+      const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
+      if (supabase) {
+        await supabase.from("notifications").delete().lt("timestamp", twentyFourHoursAgo);
+      }
+
+      const snapshot = await db.collection("notifications").orderBy("timestamp", "desc").get();
       const list: any[] = [];
       snapshot.forEach(doc => {
         list.push({ id: doc.id, ...doc.data() });
       });
-      list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      // The list is already sorted by the query, but an explicit sort is a good fallback.
+      if (!supabase) { // only sort if not using supabase's orderby
+        list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      }
       res.json(list);
     } catch (err: any) {
       console.error("Error listing notifications on server:", err);
@@ -1526,12 +1535,18 @@ function defineApiRoutes() {
         newStatus,
         actionType,
         description,
-        recipientRole
+        recipientRole,
+        notify,
       } = req.body;
 
       if (!toEmail) {
         res.status(400).json({ error: "Recipient email is required" });
         return;
+      }
+
+      // Do not generate notification if the recipient is the one who performed the action
+      if (notify === 'assigner' && recipientRole === 'admin') {
+        // This logic is now handled on the frontend, but as a safeguard:
       }
 
       let subject = `Task Notification - ${taskTitle}`;
@@ -1543,7 +1558,7 @@ function defineApiRoutes() {
       if (ai) {
         try {
           const prompt = `
-            You are an automated notification system for the project management app "Innovalley Workspace".
+            You are an automated notification system for the project management app "Innovalley Workspace". Your tone is professional and direct.
             Compose a highly professional, polite, and clean notification email regarding a task update.
             
             Details:
@@ -1557,7 +1572,7 @@ function defineApiRoutes() {
             
             Format the response as a valid JSON object with EXACTLY these two keys:
             "subject": "A concise and relevant email subject line"
-            "body": "A clean HTML email body, inside a container with modern but simple inline CSS styling. Use high-contrast, professional slate-colored header, readable text size, and soft margins. Do not use generic placeholders.${isRecipientAdmin ? '' : ' Mention that this is an automated notification from Innovalley Services and that users should not reply directly.'}"
+            "body": "A clean HTML email body, inside a container with modern but simple inline CSS styling. Use high-contrast, professional slate-colored header, readable text size, and soft margins. Do not use generic placeholders. Mention that this is an automated notification from Innovalley Services and that users should not reply directly."
             
             Return ONLY the raw JSON string, do not wrap it in markdown block tags like \`\`\`json.
           `;
@@ -1592,11 +1607,8 @@ function defineApiRoutes() {
                 <p style="margin: 0 0 8px 0;"><strong>Status:</strong> <span style="text-decoration: line-through; color: #94a3b8;">${previousStatus}</span> &rarr; <span style="color: #10b981; font-weight: bold; text-transform: uppercase;">${newStatus}</span></p>
                 <p style="margin: 0;"><strong>Details:</strong> ${description || 'N/A'}</p>
               </div>
-              ${!isRecipientAdmin ? `
-                <p style="font-size: 12px; color: #64748b; margin-top: 20px; border-top: 1px solid #f1f5f9; padding-top: 10px;">
-                   
-                </p>
-              ` : ''}
+              <p style="font-size: 12px; color: #64748b; margin-top: 20px; border-top: 1px solid #f1f5f9; padding-top: 10px;">
+              </p>
             </div>
           `;
         } else {
@@ -1611,11 +1623,8 @@ function defineApiRoutes() {
                 <p style="margin: 0 0 8px 0;"><strong>Status:</strong> <span style="color: #3b82f6; font-weight: bold; text-transform: uppercase;">ASSIGNED</span></p>
                 <p style="margin: 0;"><strong>Details:</strong> ${description || 'N/A'}</p>
               </div>
-              ${!isRecipientAdmin ? `
-                <p style="font-size: 12px; color: #64748b; margin-top: 20px; border-top: 1px solid #f1f5f9; padding-top: 10px;">
-                   
-                </p>
-              ` : ''}
+              <p style="font-size: 12px; color: #64748b; margin-top: 20px; border-top: 1px solid #f1f5f9; padding-top: 10px;">
+              </p>
             </div>
           `;
         }

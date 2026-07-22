@@ -105,16 +105,20 @@ const sendAutomatedNotification = async (params: {
   newStatus: string;
   actionType: 'status_change' | 'assigned';
   description?: string;
-  projectId: string;
   recipientRole?: 'admin' | 'employee' | 'client';
+  // New properties to control notification logic
+  projectId: string;
+  taskTitle: string;
 }) => {
   try {
+    // The response from /api/notify contains the generated notification content
     const response = await fetch("/api/notify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params)
     });
 
+    // If the notification was generated successfully, log it to the database
     if (response.ok) {
       const data = await response.json();
       if (data.success && data.notification) {
@@ -150,11 +154,10 @@ export const createTask = async (task: Omit<Task, 'id' | 'createdAt' | 'updatedA
   
   const createdTask = await res.json();
 
-  // If self-assigned, don't send a notification
-  if (assignee.phone === creator.phone) {
+  // Self-assigned tasks should not trigger notifications.
+  if (creator.phone === assignee.phone) {
     return createdTask as Task;
   }
-
 
   // Trigger automated notification in the background
   sendAutomatedNotification({
@@ -166,7 +169,7 @@ export const createTask = async (task: Omit<Task, 'id' | 'createdAt' | 'updatedA
     newStatus: 'assigned',
     actionType: 'assigned',
     description: task.description,
-    projectId: project.id,
+    projectId: project.id, // Pass required fields
     recipientRole: assignee.role
   }).catch(err => {
     console.error("Background task assignment notification failed:", err);
@@ -211,31 +214,32 @@ export const updateTaskStatus = async (
 
   const previousStatus = task.status;
 
-  // Fetch all employees to correctly identify roles for notifications
-  const notificationEmails = new Set<string>();
-  notificationEmails.add(assignee.email);
-  let allEmployees: Employee[] = [];
-
-  try {
-    const empRes = await fetch("/api/employees");
-    if (empRes.ok) {
-      allEmployees = await empRes.json();
-      allEmployees.forEach(emp => {
-        if (emp.role === "admin" && emp.email) {
-          notificationEmails.add(emp.email.trim().toLowerCase());
-        }
+  // If the updater is the assignee, notify the creator (assigner).
+  // Do not notify the person who made the change.
+  if (updater.phone === assignee.phone) {
+    const assigner = (await fetchEmployees()).find(e => e.phone === task.assignedBy || e.email === task.assignedBy);
+    
+    if (assigner && assigner.phone !== updater.phone) {
+      sendAutomatedNotification({
+        toEmail: assigner.email,
+        toName: assigner.name,
+        taskTitle: task.title,
+        projectName: project.name,
+        updaterName: updater.name,
+        previousStatus,
+        newStatus,
+        actionType: "status_change",
+        description: `Status changed from ${previousStatus} to ${newStatus} by ${updater.name}`,
+        projectId: project.id,
+        recipientRole: assigner.role
+      }).catch(err => {
+        console.error(`Background status change notification failed for assigner ${assigner.email}:`, err);
       });
     }
-  } catch (e) {
-    allEmployees = [assignee, updater]; // Fallback to at least the involved users
-    console.error("Error fetching admin emails for notifications:", e);
-  }
-
-  for (const email of Array.from(notificationEmails)) {
-    const recipient = allEmployees.find(e => e.email && e.email.trim().toLowerCase() === email) || { name: "Administrator", role: 'admin' };
+  } else { // If the updater is NOT the assignee (e.g., an admin), notify the assignee.
     sendAutomatedNotification({
-      toEmail: email,
-      toName: recipient.name,
+      toEmail: assignee.email,
+      toName: assignee.name,
       taskTitle: task.title,
       projectName: project.name,
       updaterName: updater.name,
@@ -243,10 +247,10 @@ export const updateTaskStatus = async (
       newStatus,
       actionType: "status_change",
       description: `Status changed from ${previousStatus} to ${newStatus} by ${updater.name}`,
-      projectId: project.id,
-      recipientRole: recipient.role
+      projectId: project.id, // Pass required fields
+      recipientRole: assignee.role
     }).catch(err => {
-      console.error(`Background status change notification failed for ${email}:`, err);
+      console.error(`Background status change notification failed for assignee ${assignee.email}:`, err);
     });
   }
 };
