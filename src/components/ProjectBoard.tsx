@@ -869,22 +869,23 @@ function TaskCard({ task, project, employees, onStatusChange, formatFileSize, cu
         }`}>
           {task.title}
         </h4>
-        {task.description && ( <>
-          <p className={`text-xs mt-1 leading-relaxed whitespace-pre-wrap ${
-            isCompleted ? 'text-slate-400' : 'text-slate-500'
-          } ${!isDescExpanded && 'line-clamp-3'}`}>
-            {task.description} 
-          </p> 
-          {task.description.length > 150 && (
-            <button onClick={() => setIsDescExpanded(!isDescExpanded)} className="text-[10px] font-bold text-indigo-600 hover:underline mt-1 flex items-center gap-1">
-              {isDescExpanded ? 'Read Less' : 'Read More'}
-              {isDescExpanded 
-                ? <ChevronUp className="w-3 h-3" /> 
-                : <ChevronDown className="w-3 h-3" />
-              }
-            </button>
-          )}
-          </>
+        {task.description && (
+          <div>
+            <p className={`text-xs mt-1 leading-relaxed whitespace-pre-wrap ${
+              isCompleted ? 'text-slate-400' : 'text-slate-500'
+            } ${!isDescExpanded && 'line-clamp-3'}`}>
+              {task.description} 
+            </p> 
+            {task.description.length > 150 && (
+              <button onClick={() => setIsDescExpanded(!isDescExpanded)} className="text-[10px] font-bold text-indigo-600 hover:underline mt-1 flex items-center gap-1">
+                {isDescExpanded ? 'Read Less' : 'Read More'}
+                {isDescExpanded 
+                  ? <ChevronUp className="w-3 h-3" /> 
+                  : <ChevronDown className="w-3 h-3" />
+                }
+              </button>
+            )}
+          </div>
         )}
 
         {/* Saved Feedback / Notes display block */}
